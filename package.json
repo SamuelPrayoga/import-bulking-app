@@ -1,0 +1,35 @@
+{
+  "name": "import-bulking",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "extract-reference-data": "tsx scripts/extractReferenceData.ts",
+    "revalidate-all": "tsx scripts/revalidateAll.ts",
+    "test-google-connection": "tsx scripts/testGoogleConnection.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "exceljs": "^4.4.0",
+    "googleapis": "^144.0.0",
+    "lucide-react": "^1.37.0",
+    "next": "^14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
