@@ -4,7 +4,7 @@
 // Crypto works identically in both.
 
 export const SESSION_COOKIE_NAME = "perlinsos_session";
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h — an internal single-operator admin tool re-authenticating daily is a reasonable tradeoff for data handling real citizen NIK/phone numbers.
+export const SESSION_TTL_MS = 60 * 60 * 1000; // 1h, per explicit request — short-lived given this handles real citizen NIK/phone numbers.
 
 function getSecret(): string {
   const value = process.env.SESSION_SECRET;
@@ -66,7 +66,7 @@ export async function isValidSessionToken(token: string | undefined | null): Pro
   const valid = await crypto.subtle.verify(
     "HMAC",
     key,
-    signatureBytes,
+    signatureBytes as BufferSource,
     new TextEncoder().encode(payload)
   );
   if (!valid) return false;

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "extract-reference-data": "tsx scripts/extractReferenceData.ts",
     "revalidate-all": "tsx scripts/revalidateAll.ts",
-    "test-google-connection": "tsx scripts/testGoogleConnection.ts"
+    "test-google-connection": "tsx scripts/testGoogleConnection.ts",
+    "hash-password": "tsx scripts/hashPassword.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

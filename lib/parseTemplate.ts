@@ -67,7 +67,12 @@ export function parseFormSheet(workbook: ExcelJS.Workbook): ParsedSubmissionFile
     const job = cellText(row.getCell(COL.job));
     const kotaKabupaten = cellText(row.getCell(COL.kotaKabupaten));
 
-    if (!no && !nama && !nik && !noWa && !job && !kotaKabupaten) {
+    // "No" (column A) is deliberately excluded from this check: PICs commonly drag-autofill it
+    // far past their real data, leaving a long tail of rows where only the sequence number is
+    // non-empty and every substantive field is blank — that tail must count as blank, not as 60+
+    // more phantom "Nama kosong / NIK kosong" invalid rows (seen for real in a submitted file
+    // whose real data ended at row 77 but whose "No" column kept counting up to row 139).
+    if (!nama && !nik && !noWa && !job && !kotaKabupaten) {
       blankStreak++;
       continue;
     }

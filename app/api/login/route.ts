@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearFailedAttempts, isLockedOut, recordFailedAttempt, verifyCredentials } from "../../../lib/auth";
-import { SESSION_COOKIE_NAME, createSessionToken } from "../../../lib/session";
+import { SESSION_COOKIE_NAME, SESSION_TTL_MS, createSessionToken } from "../../../lib/session";
 
 export async function POST(request: NextRequest) {
   const ip = request.headers.get("x-forwarded-for") ?? "local";
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 24, // 24h, matches SESSION_TTL_MS in lib/auth.ts
+    maxAge: SESSION_TTL_MS / 1000,
   });
   return response;
 }

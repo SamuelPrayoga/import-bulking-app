@@ -48,6 +48,21 @@ describe("parseSubmissionFile (synthetic fixture)", () => {
     expect(result.rows[1]).toMatchObject({ rowNumber: 9, nama: "Yosafat Setyo Raharjo" });
   });
 
+  it("treats a row as blank when only the 'No' column has a leftover value (drag-autofill past the real data)", async () => {
+    // Mirrors a real submitted file: real data ended at row 77, but the PIC's "No" column had
+    // been autofilled all the way to row 139 — every other field on those trailing rows was
+    // genuinely empty, yet the stray sequence number alone made them look "non-blank" and the
+    // reader kept going, producing 62 phantom "Nama kosong / NIK kosong" invalid rows.
+    const buffer = await buildFixtureWorkbook([
+      ["1", "Budi Santoso", "1811010101900001", "081234567890", "Pendamping PKH", "MESUJI"],
+      ["2", "Ani Wijaya", "1811010101900002", "081234567891", "TKSK", "MESUJI"],
+      ...Array.from({ length: 15 }, (_, i) => [String(i + 3)] as string[]), // "No" only, rest blank
+    ]);
+    const result = await parseSubmissionFile(buffer);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.map((r) => r.nama)).toEqual(["Budi Santoso", "Ani Wijaya"]);
+  });
+
   it("reads a name that Excel auto-linked as a hyperlink with nested rich text (e.g. '...M.Si')", async () => {
     const buffer = await buildFixtureWorkbook([]);
     // Simulate the shape exceljs produces for a hyperlinked, partially-rich-text cell, which a
