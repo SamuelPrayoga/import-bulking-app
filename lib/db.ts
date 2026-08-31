@@ -76,7 +76,33 @@ function initSchema(database: Database.Database): void {
       timestamp TEXT NOT NULL,
       first_seen_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      details TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
   `);
+
+  // CREATE TABLE IF NOT EXISTS only handles a table that doesn't exist yet — a table that already
+  // exists (the live data/app.db from before this column existed) needs an explicit ALTER TABLE.
+  // Guarded by pragma table_info so this is safe to run on every startup, fresh DB or not.
+  const submissionRowColumns = database.prepare("PRAGMA table_info(submission_rows)").all() as Array<{ name: string }>;
+  if (!submissionRowColumns.some((c) => c.name === "warnings")) {
+    database.exec("ALTER TABLE submission_rows ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!submissionRowColumns.some((c) => c.name === "nik_numeric_risk")) {
+    database.exec("ALTER TABLE submission_rows ADD COLUMN nik_numeric_risk INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const submissionColumns = database.prepare("PRAGMA table_info(submissions)").all() as Array<{ name: string }>;
+  if (!submissionColumns.some((c) => c.name === "followed_up_at")) {
+    database.exec("ALTER TABLE submissions ADD COLUMN followed_up_at TEXT");
+  }
 }
 
 export function submissionExists(id: string): boolean {
@@ -112,10 +138,10 @@ export function saveProcessedSubmission(submission: SubmissionRecord, rows: Vali
   const insertRow = database.prepare(`
     INSERT INTO submission_rows (
       submission_id, row_number, no, nama, nik, no_wa, job, kota_kabupaten,
-      kode_prov, kode_kota, job_id, status, errors
+      kode_prov, kode_kota, job_id, status, errors, warnings, nik_numeric_risk
     ) VALUES (
       @submissionId, @rowNumber, @no, @nama, @nik, @noWa, @job, @kotaKabupaten,
-      @kodeProv, @kodeKota, @jobId, @status, @errors
+      @kodeProv, @kodeKota, @jobId, @status, @errors, @warnings, @nikNumericRisk
     )
   `);
 
@@ -146,6 +172,8 @@ export function saveProcessedSubmission(submission: SubmissionRecord, rows: Vali
         jobId: r.jobId,
         status: r.status,
         errors: JSON.stringify(r.errors),
+        warnings: JSON.stringify(r.warnings),
+        nikNumericRisk: r.nikNumericRisk ? 1 : 0,
       });
 
       if (NIK_RE.test(r.nik)) {
@@ -173,7 +201,8 @@ export function listSubmissions(): SubmissionRecord[] {
         declared_kabkota as declaredKabKota, instansi, drive_file_id as driveFileId,
         file_provinsi as fileProvinsi, sheet_status as sheetStatus, location_mismatch as locationMismatch,
         valid_count as validCount, invalid_count as invalidCount, status, processed_at as processedAt,
-        error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore
+        error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore,
+        followed_up_at as followedUpAt
       FROM submissions`
     )
     .all() as Array<Record<string, unknown>>;
@@ -198,7 +227,8 @@ export function getSubmission(submissionId: string): SubmissionRecord | null {
         declared_kabkota as declaredKabKota, instansi, drive_file_id as driveFileId,
         file_provinsi as fileProvinsi, sheet_status as sheetStatus, location_mismatch as locationMismatch,
         valid_count as validCount, invalid_count as invalidCount, status, processed_at as processedAt,
-        error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore
+        error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore,
+        followed_up_at as followedUpAt
       FROM submissions WHERE id = ?`
     )
     .get(submissionId) as Record<string, unknown> | undefined;
@@ -207,15 +237,25 @@ export function getSubmission(submissionId: string): SubmissionRecord | null {
 }
 
 /** Raw (unvalidated) row fields plus the internal row id, for re-running validation against already-stored data. */
-export function getRawSubmissionRows(
-  submissionId: string
-): Array<{ dbId: number; rowNumber: number; no: string; nama: string; nik: string; noWa: string; job: string; kotaKabupaten: string }> {
-  return getDb()
+export function getRawSubmissionRows(submissionId: string): Array<{
+  dbId: number;
+  rowNumber: number;
+  no: string;
+  nama: string;
+  nik: string;
+  noWa: string;
+  job: string;
+  kotaKabupaten: string;
+  nikNumericRisk: boolean;
+}> {
+  const rows = getDb()
     .prepare(
-      `SELECT id as dbId, row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten
+      `SELECT id as dbId, row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten,
+        nik_numeric_risk as nikNumericRisk
       FROM submission_rows WHERE submission_id = ? ORDER BY row_number ASC`
     )
-    .all(submissionId) as Array<{
+    .all(submissionId) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({ ...r, nikNumericRisk: Boolean(r.nikNumericRisk) })) as Array<{
     dbId: number;
     rowNumber: number;
     no: string;
@@ -224,18 +264,19 @@ export function getRawSubmissionRows(
     noWa: string;
     job: string;
     kotaKabupaten: string;
+    nikNumericRisk: boolean;
   }>;
 }
 
 /** Overwrites one row's computed validation fields in place (used by the revalidation backfill). */
 export function updateRowValidation(
   dbId: number,
-  patch: Pick<ValidatedRow, "nama" | "kotaKabupaten" | "status" | "errors" | "kodeProv" | "kodeKota" | "jobId">
+  patch: Pick<ValidatedRow, "nama" | "kotaKabupaten" | "status" | "errors" | "warnings" | "kodeProv" | "kodeKota" | "jobId">
 ): void {
   getDb()
     .prepare(
       `UPDATE submission_rows SET nama = @nama, kota_kabupaten = @kotaKabupaten, status = @status,
-        errors = @errors, kode_prov = @kodeProv, kode_kota = @kodeKota, job_id = @jobId WHERE id = @dbId`
+        errors = @errors, warnings = @warnings, kode_prov = @kodeProv, kode_kota = @kodeKota, job_id = @jobId WHERE id = @dbId`
     )
     .run({
       dbId,
@@ -243,6 +284,7 @@ export function updateRowValidation(
       kotaKabupaten: patch.kotaKabupaten,
       status: patch.status,
       errors: JSON.stringify(patch.errors),
+      warnings: JSON.stringify(patch.warnings),
       kodeProv: patch.kodeProv,
       kodeKota: patch.kodeKota,
       jobId: patch.jobId,
@@ -261,6 +303,13 @@ export function updateSheetStatus(submissionId: string, sheetStatus: string): vo
   getDb()
     .prepare("UPDATE submissions SET sheet_status = @sheetStatus WHERE id = @submissionId")
     .run({ submissionId, sheetStatus });
+}
+
+/** Marks (or unmarks) a submission as followed up with the PIC — an operator-driven workflow flag, independent of the row-level Valid/Invalid status. */
+export function setFollowUpStatus(submissionId: string, followedUp: boolean): void {
+  getDb()
+    .prepare("UPDATE submissions SET followed_up_at = @followedUpAt WHERE id = @submissionId")
+    .run({ submissionId, followedUpAt: followedUp ? new Date().toISOString() : null });
 }
 
 /** Updates just the file_provinsi field — used when the revalidation backfill applies the declaredProvinsi fallback for a blank C2 to already-stored submissions. Backfill-only. */
@@ -301,12 +350,17 @@ export function listSubmissionsChronological(): SubmissionRecord[] {
   return listSubmissions().sort((a, b) => parseFormTimestamp(a.timestamp) - parseFormTimestamp(b.timestamp));
 }
 
+/** Successfully processed submissions that haven't been marked followed-up yet, oldest first — the operational queue: whoever has been waiting longest gets handled first. */
+export function getPendingFollowUps(): SubmissionRecord[] {
+  return listSubmissionsChronological().filter((s) => s.status === "processed" && !s.followedUpAt);
+}
+
 export function getSubmissionRows(submissionId: string): ValidatedRow[] {
   const rows = getDb()
     .prepare(
       `SELECT
         row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten,
-        kode_prov as kodeProv, kode_kota as kodeKota, job_id as jobId, status, errors
+        kode_prov as kodeProv, kode_kota as kodeKota, job_id as jobId, status, errors, warnings
       FROM submission_rows WHERE submission_id = ? ORDER BY row_number ASC`
     )
     .all(submissionId) as Array<Record<string, unknown>>;
@@ -314,6 +368,7 @@ export function getSubmissionRows(submissionId: string): ValidatedRow[] {
   return rows.map((r) => ({
     ...r,
     errors: JSON.parse(r.errors as string),
+    warnings: JSON.parse(r.warnings as string),
   })) as ValidatedRow[];
 }
 
@@ -323,7 +378,7 @@ export function getReportRows(submissionId?: string): ReportRow[] {
     SELECT
       sr.row_number as rowNumber, sr.no, sr.nama, sr.nik, sr.no_wa as noWa, sr.job,
       sr.kota_kabupaten as kotaKabupaten, sr.kode_prov as kodeProv, sr.kode_kota as kodeKota,
-      sr.job_id as jobId, sr.status, sr.errors,
+      sr.job_id as jobId, sr.status, sr.errors, sr.warnings,
       s.id as submissionId, s.file_provinsi as fileProvinsi, s.pic_name as picName,
       s.instansi, s.pic_whatsapp as picWhatsapp, s.timestamp,
       s.location_mismatch as locationMismatch, s.declared_provinsi as declaredProvinsi,
@@ -341,5 +396,38 @@ export function getReportRows(submissionId?: string): ReportRow[] {
     ...r,
     locationMismatch: Boolean(r.locationMismatch),
     errors: JSON.parse(r.errors as string),
+    warnings: JSON.parse(r.warnings as string),
   })) as unknown as ReportRow[];
+}
+
+export interface NikSearchHit {
+  submissionId: string;
+  picName: string;
+  timestamp: string;
+  rowNumber: number;
+  nama: string;
+  nik: string;
+  status: "valid" | "invalid";
+}
+
+/**
+ * Finds every row across every submission whose NIK contains the given digits — a partial match
+ * (not just exact), since an operator chasing down a duplicate or a suspected typo often only has
+ * part of the number, not the full 16 digits.
+ */
+export function searchByNik(query: string): NikSearchHit[] {
+  const digits = query.replace(/\D/g, "");
+  if (!digits) return [];
+  return getDb()
+    .prepare(
+      `SELECT
+        s.id as submissionId, s.pic_name as picName, s.timestamp,
+        sr.row_number as rowNumber, sr.nama, sr.nik, sr.status
+      FROM submission_rows sr
+      JOIN submissions s ON s.id = sr.submission_id
+      WHERE sr.nik LIKE @pattern
+      ORDER BY s.timestamp DESC
+      LIMIT 200`
+    )
+    .all({ pattern: `%${digits}%` }) as NikSearchHit[];
 }

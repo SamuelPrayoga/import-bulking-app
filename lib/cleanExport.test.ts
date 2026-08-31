@@ -15,6 +15,7 @@ function reportRow(overrides: Partial<ReportRow>): ReportRow {
     kotaKabupaten: "MESUJI",
     status: "valid",
     errors: [],
+    warnings: [],
     kodeProv: "18",
     kodeKota: "1811",
     jobId: "1",

@@ -132,6 +132,27 @@ describe("trySmartMap", () => {
     expect(result!.score).toBeGreaterThanOrEqual(SMART_MAP_AUTO_ACCEPT_SCORE);
   });
 
+  it("flags a NIK read from a Number-typed cell as at-risk once it exceeds the float-precision limit (province 90+), but not a Text-typed one", () => {
+    const buffer = buildBuffer([
+      {
+        name: "Sheet1",
+        rows: [
+          ["NAMA", "NIK"],
+          ["Budi Papua", 9407199254740991], // numeric cell — at risk
+          ["Ani Papua", "9407199254740991"], // text cell, same value — always safe
+          ["Citra Lampung", 1811010101900001], // numeric cell, safe range
+        ],
+      },
+    ]);
+
+    const result = trySmartMap(buffer);
+    expect(result).not.toBeNull();
+    const byName = Object.fromEntries(result!.rows.map((r) => [r.nama, r.nikNumericRisk]));
+    expect(byName["Budi Papua"]).toBe(true);
+    expect(byName["Ani Papua"]).toBe(false);
+    expect(byName["Citra Lampung"]).toBe(false);
+  });
+
   it("maps a NIK header even when embedded in a longer label, e.g. 'NOMOR ( NIK )'", () => {
     const buffer = buildBuffer([
       {

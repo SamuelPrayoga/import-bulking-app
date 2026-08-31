@@ -3,7 +3,11 @@ node_modules
 out
 data/app.db
 data/app.db-journal
+data/app.db-shm
+data/app.db-wal
+data/backups/
 .env
 .env.local
 *.log
 .DS_Store
+*.tsbuildinfo

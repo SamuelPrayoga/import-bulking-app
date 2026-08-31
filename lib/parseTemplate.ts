@@ -28,6 +28,15 @@ export function cellText(cell: ExcelJS.Cell): string {
   return extractText(cell.value);
 }
 
+// A 64-bit float (what every numeric spreadsheet cell is stored as, per the XLSX format itself —
+// this isn't specific to exceljs) can only represent an integer exactly up to 2^53. A 16-digit
+// NIK typed into a Number-formatted cell exceeds that once its province code (the first 2 digits)
+// reaches ~90 — Excel silently rounds the trailing digit(s) at save time, before the file ever
+// reaches us. Text-formatted cells never have this problem (checked via cell.type, not the value).
+export function isNikNumericRisk(cell: ExcelJS.Cell, nik: string): boolean {
+  return cell.type === ExcelJS.ValueType.Number && /^\d{16}$/.test(nik) && Number(nik) >= Number.MAX_SAFE_INTEGER;
+}
+
 export async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
   // exceljs bundles its own @types/node-derived Buffer type, which TS treats as structurally
@@ -60,9 +69,10 @@ export function parseFormSheet(workbook: ExcelJS.Workbook): ParsedSubmissionFile
   let blankStreak = 0;
   for (let rowNumber = DATA_START_ROW; rowNumber <= MAX_ROW && blankStreak < BLANK_ROW_TOLERANCE; rowNumber++) {
     const row = sheet.getRow(rowNumber);
+    const nikCell = row.getCell(COL.nik);
     const no = cellText(row.getCell(COL.no));
     const nama = cellText(row.getCell(COL.nama));
-    const nik = cellText(row.getCell(COL.nik));
+    const nik = cellText(nikCell);
     const noWa = cellText(row.getCell(COL.noWa));
     const job = cellText(row.getCell(COL.job));
     const kotaKabupaten = cellText(row.getCell(COL.kotaKabupaten));
@@ -78,7 +88,7 @@ export function parseFormSheet(workbook: ExcelJS.Workbook): ParsedSubmissionFile
     }
     blankStreak = 0;
 
-    rows.push({ rowNumber, no, nama, nik, noWa, job, kotaKabupaten });
+    rows.push({ rowNumber, no, nama, nik, noWa, job, kotaKabupaten, nikNumericRisk: isNikNumericRisk(nikCell, nik) });
   }
 
   return { fileProvinsi, rows };

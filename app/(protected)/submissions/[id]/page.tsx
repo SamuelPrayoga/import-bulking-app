@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Clock, Download, FileText, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Download, FileText, MessageCircle, Sparkles } from "lucide-react";
 import { getSubmission, getSubmissionRows } from "../../../../lib/db";
 import { RowsReviewTable } from "../../../../components/RowsReviewTable";
 import { WhatsAppDraftPanel } from "../../../../components/WhatsAppDraftPanel";
@@ -51,6 +51,16 @@ export default async function SubmissionDetailPage({
           {submission.importMethod === "smart-mapped" && (
             <span className="badge warning">
               <Sparkles size={12} /> Deteksi Otomatis (Skor: {submission.mappingScore}%)
+            </span>
+          )}
+          {submission.followedUpAt && (
+            <span
+              className="badge valid"
+              title={`Ditandai otomatis saat laporan di-download & WhatsApp dibuka: ${new Date(
+                submission.followedUpAt
+              ).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}`}
+            >
+              <MessageCircle size={12} /> Sudah Ditindaklanjuti
             </span>
           )}
         </div>

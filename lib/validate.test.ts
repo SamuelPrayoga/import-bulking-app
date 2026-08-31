@@ -92,6 +92,21 @@ describe("validateSubmissionRows", () => {
     expect(second.errors.some((e) => e.includes("duplikat"))).toBe(true);
   });
 
+  it("warns (but does not invalidate) a NIK flagged as read from a numeric cell at risk of precision loss", () => {
+    const [result] = validateSubmissionRows(
+      [row({ nik: "9407199254740991", nikNumericRisk: true })],
+      baseCtx
+    );
+    expect(result.status).toBe("valid"); // uncertain, not wrong — must not block the row
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.some((w) => w.includes("presisi"))).toBe(true);
+  });
+
+  it("does not warn when the NIK is fine (nikNumericRisk false or unset)", () => {
+    const [result] = validateSubmissionRows([row({})], baseCtx);
+    expect(result.warnings).toEqual([]);
+  });
+
   it("flags a NIK that already exists in the cross-submission registry", () => {
     const ctx = {
       ...baseCtx,

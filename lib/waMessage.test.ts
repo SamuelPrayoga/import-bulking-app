@@ -24,6 +24,7 @@ function submission(overrides: Partial<SubmissionRecord> = {}): SubmissionRecord
     sheetStatus: "",
     importMethod: "template",
     mappingScore: null,
+    followedUpAt: null,
     ...overrides,
   };
 }
@@ -39,6 +40,7 @@ function row(overrides: Partial<ValidatedRow> = {}): ValidatedRow {
     kotaKabupaten: "MESUJI",
     status: "valid",
     errors: [],
+    warnings: [],
     kodeProv: "18",
     kodeKota: "1811",
     jobId: "1",

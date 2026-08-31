@@ -137,12 +137,17 @@ export function trySmartMap(buffer: Buffer): SmartMapResult | null {
 
     const rawSheetRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
     const sheetRows = rawSheetRows.map((row) => row.map((cell) => (cell === null || cell === undefined ? "" : String(cell).trim())));
+    // Parallel grid of "was this cell a Number type" — captured before the stringification above
+    // erases it, so a NIK read from a numeric cell can still be flagged for precision-loss risk
+    // (see isNikNumericRisk in lib/parseTemplate.ts for why that matters).
+    const sheetRowIsNumber = rawSheetRows.map((row) => row.map((cell) => typeof cell === "number"));
 
     const header = detectHeaderRow(sheetRows);
     if (!header) continue;
 
     const { rowIndex: headerRowIndex, mapping } = header;
     const cellAt = (row: string[], col: number | undefined) => (col !== undefined ? (row[col] ?? "") : "");
+    const boolCellAt = (row: boolean[], col: number | undefined) => (col !== undefined ? (row[col] ?? false) : false);
 
     const rawRows: RawAgentRow[] = [];
     let blankStreak = 0;
@@ -153,6 +158,7 @@ export function trySmartMap(buffer: Buffer): SmartMapResult | null {
       const noWa = cellAt(row, mapping.noWa);
       const job = cellAt(row, mapping.job);
       const kotaKabupaten = cellAt(row, mapping.kotaKabupaten);
+      const nikWasNumberCell = boolCellAt(sheetRowIsNumber[i] ?? [], mapping.nik);
 
       if (!nama && !nik && !noWa && !job && !kotaKabupaten) {
         blankStreak++;
@@ -168,7 +174,8 @@ export function trySmartMap(buffer: Buffer): SmartMapResult | null {
       if (mapping.nik !== undefined && !nik && !job && !noWa) continue;
 
       blankStreak = 0;
-      rawRows.push({ rowNumber: i + 1, no: String(rawRows.length + 1), nama, nik, noWa, job, kotaKabupaten });
+      const nikNumericRisk = nikWasNumberCell && /^\d{16}$/.test(nik) && Number(nik) >= Number.MAX_SAFE_INTEGER;
+      rawRows.push({ rowNumber: i + 1, no: String(rawRows.length + 1), nama, nik, noWa, job, kotaKabupaten, nikNumericRisk });
     }
 
     if (rawRows.length === 0) continue;

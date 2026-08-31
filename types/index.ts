@@ -32,6 +32,13 @@ export interface RawAgentRow {
   noWa: string;
   job: string;
   kotaKabupaten: string;
+  /**
+   * True when the NIK cell was stored as a Number (not Text) in the source file AND its value is
+   * large enough (province code 90+) to exceed what a 64-bit float can represent exactly — Excel
+   * itself silently rounds the trailing digit(s) in that case, before the file ever reaches us.
+   * Not an error (we can't know the true original digits), just a flag for a manual-review warning.
+   */
+  nikNumericRisk?: boolean;
 }
 
 export interface ParsedSubmissionFile {
@@ -44,6 +51,8 @@ export type RowStatus = "valid" | "invalid";
 export interface ValidatedRow extends RawAgentRow {
   status: RowStatus;
   errors: string[];
+  /** Non-blocking notes — doesn't affect `status`, unlike `errors`. */
+  warnings: string[];
   kodeProv: string | null;
   kodeKota: string | null;
   jobId: string | null;
@@ -102,4 +111,6 @@ export interface SubmissionRecord {
   importMethod: "template" | "smart-mapped";
   /** Confidence score (0-100) from lib/smartMapping.ts, only set when importMethod is "smart-mapped". */
   mappingScore: number | null;
+  /** When the operator marked this submission as followed up with the PIC (e.g. via WA) — null if not yet. */
+  followedUpAt: string | null;
 }

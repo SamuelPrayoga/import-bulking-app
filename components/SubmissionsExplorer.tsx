@@ -12,6 +12,7 @@ import {
   Clock,
   Eye,
   FileWarning,
+  MessageCircle,
   Search,
   X,
   XCircle,
@@ -23,6 +24,7 @@ import { parseFormTimestamp } from "../lib/formTimestamp";
 const PAGE_SIZE = 10;
 type StatusFilter = "all" | "processed" | "failed";
 type SheetFilter = "all" | "done" | "pending";
+type FollowUpFilter = "all" | "done" | "pending";
 type SortOrder = "desc" | "asc";
 
 /** Shortens a long Jabatan/Instansi string to a handful of words for the list view; the full text is still in the title tooltip. */
@@ -45,6 +47,7 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
   const query = searchParams.get("q") ?? "";
   const statusFilter = (searchParams.get("status") as StatusFilter) ?? "all";
   const sheetFilter = (searchParams.get("sheet") as SheetFilter) ?? "all";
+  const followUpFilter = (searchParams.get("followup") as FollowUpFilter) ?? "all";
   const kabKotaFilter = searchParams.get("kabkota") ?? "all";
   const sortOrder = (searchParams.get("sort") as SortOrder) ?? "desc";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
@@ -86,6 +89,8 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
       if (statusFilter !== "all" && s.status !== statusFilter) return false;
       if (sheetFilter === "done" && !isSheetStatusDone(s.sheetStatus)) return false;
       if (sheetFilter === "pending" && isSheetStatusDone(s.sheetStatus)) return false;
+      if (followUpFilter === "done" && !s.followedUpAt) return false;
+      if (followUpFilter === "pending" && s.followedUpAt) return false;
       if (kabKotaFilter !== "all" && (s.declaredKabKota || "(kosong)") !== kabKotaFilter) return false;
       if (!q) return true;
       return (
@@ -95,7 +100,7 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
         s.declaredProvinsi.toLowerCase().includes(q)
       );
     });
-  }, [submissions, query, statusFilter, sheetFilter, kabKotaFilter]);
+  }, [submissions, query, statusFilter, sheetFilter, followUpFilter, kabKotaFilter]);
 
   const sorted = useMemo(() => {
     const withTime = filtered.map((s) => ({ s, t: parseFormTimestamp(s.timestamp) }));
@@ -103,7 +108,9 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
     return withTime.map((x) => x.s);
   }, [filtered, sortOrder]);
 
-  const hasActiveFilters = Boolean(query || statusFilter !== "all" || sheetFilter !== "all" || kabKotaFilter !== "all");
+  const hasActiveFilters = Boolean(
+    query || statusFilter !== "all" || sheetFilter !== "all" || followUpFilter !== "all" || kabKotaFilter !== "all"
+  );
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -185,6 +192,17 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
 
           <select
             className="select-filter"
+            value={followUpFilter}
+            onChange={(e) => updateParams({ followup: e.target.value === "all" ? null : e.target.value, page: null })}
+            aria-label="Filter Tindak Lanjut"
+          >
+            <option value="all">Semua Tindak Lanjut</option>
+            <option value="done">Sudah Ditindaklanjuti</option>
+            <option value="pending">Belum Ditindaklanjuti</option>
+          </select>
+
+          <select
+            className="select-filter"
             value={kabKotaFilter}
             onChange={(e) => updateParams({ kabkota: e.target.value === "all" ? null : e.target.value, page: null })}
             aria-label="Filter Kab/Kota"
@@ -235,6 +253,9 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
                     <th>Status Sheet</th>
                     <th>Valid</th>
                     <th>Tidak Valid</th>
+                    <th title="Status Tindak Lanjut">
+                      <MessageCircle size={13} />
+                    </th>
                     <th></th>
                   </tr>
                 </thead>
@@ -272,6 +293,20 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
                       </td>
                       <td>{s.validCount}</td>
                       <td>{s.invalidCount}</td>
+                      <td>
+                        {s.followedUpAt ? (
+                          <span
+                            style={{ color: "var(--valid)", display: "inline-flex" }}
+                            title={`Sudah ditindaklanjuti: ${new Date(s.followedUpAt).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}`}
+                          >
+                            <CheckCircle2 size={15} />
+                          </span>
+                        ) : (
+                          <span className="muted-icon" title="Belum ditindaklanjuti">
+                            —
+                          </span>
+                        )}
+                      </td>
                       <td>
                         <Link className="btn btn-sm" href={`/submissions/${s.id}?${searchParams.toString()}`}>
                           <Eye size={13} /> Review

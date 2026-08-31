@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReportRows } from "../../../lib/db";
 import { buildConsolidatedReport, reportToBuffer } from "../../../lib/report";
+import { recordAuditEvent } from "../../../lib/auditLog";
 
 export async function GET(request: NextRequest) {
   const submissionId = request.nextUrl.searchParams.get("submissionId") ?? undefined;
   const rows = getReportRows(submissionId);
   const workbook = buildConsolidatedReport(rows);
   const buffer = await reportToBuffer(workbook);
+
+  const ip = request.headers.get("x-forwarded-for") ?? "local";
+  recordAuditEvent(
+    "report_download",
+    process.env.ADMIN_EMAIL ?? "-",
+    ip,
+    submissionId ? `Laporan per submission (${submissionId})` : "Laporan konsolidasi (semua submission)"
+  );
 
   const filename = submissionId
     ? `laporan-${submissionId}.xlsx`

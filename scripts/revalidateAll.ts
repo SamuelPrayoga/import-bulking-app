@@ -39,6 +39,7 @@ async function main() {
       noWa: r.noWa,
       job: r.job,
       kotaKabupaten: r.kotaKabupaten || submission.declaredKabKota,
+      nikNumericRisk: r.nikNumericRisk,
     }));
 
     // Same fallback lib/pullResponses.ts applies at pull time: a blank C2 (Provinsi) in the
@@ -61,6 +62,7 @@ async function main() {
         kotaKabupaten: v.kotaKabupaten,
         status: v.status,
         errors: v.errors,
+        warnings: v.warnings,
         kodeProv: v.kodeProv,
         kodeKota: v.kodeKota,
         jobId: v.jobId,

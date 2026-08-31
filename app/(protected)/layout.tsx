@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ShieldCheck } from "lucide-react";
+import { BarChart3, DatabaseBackup, History, MessageCircle, ShieldCheck } from "lucide-react";
 import { LogoutButton } from "../../components/LogoutButton";
+import { ThemeToggle } from "../../components/ThemeToggle";
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -15,7 +16,22 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             <div className="subtitle">Tarik, validasi, dan review data agen dari respons Google Form</div>
           </div>
         </Link>
-        <LogoutButton />
+        <div className="app-header-actions">
+          <Link className="btn secondary btn-sm" href="/tindak-lanjut">
+            <MessageCircle size={13} /> Tindak Lanjut
+          </Link>
+          <Link className="btn secondary btn-sm" href="/dashboard">
+            <BarChart3 size={13} /> Dashboard
+          </Link>
+          <Link className="btn secondary btn-sm" href="/backups">
+            <DatabaseBackup size={13} /> Backup
+          </Link>
+          <Link className="btn secondary btn-sm" href="/audit-log">
+            <History size={13} /> Log Aktivitas
+          </Link>
+          <ThemeToggle />
+          <LogoutButton />
+        </div>
       </header>
       <main>{children}</main>
     </div>

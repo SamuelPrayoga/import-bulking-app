@@ -41,6 +41,7 @@ function submission(overrides: Partial<SubmissionRecord> = {}): SubmissionRecord
     sheetStatus: "",
     importMethod: "template",
     mappingScore: null,
+    followedUpAt: null,
     ...overrides,
   };
 }
@@ -56,6 +57,7 @@ function validRow(overrides: Partial<ValidatedRow> = {}): ValidatedRow {
     kotaKabupaten: "MESUJI",
     status: "valid",
     errors: [],
+    warnings: [],
     kodeProv: "18",
     kodeKota: "1811",
     jobId: "1",
@@ -97,6 +99,44 @@ describe("listSubmissions / getSubmission", () => {
     const all = dbModule.listSubmissions();
     expect(all.some((s) => s.id === "sub-1")).toBe(true);
   });
+
+  it("starts with followedUpAt null, and setFollowUpStatus toggles it on/off", () => {
+    expect(dbModule.getSubmission("sub-1")?.followedUpAt).toBeNull();
+
+    dbModule.setFollowUpStatus("sub-1", true);
+    const marked = dbModule.getSubmission("sub-1");
+    expect(marked?.followedUpAt).not.toBeNull();
+    expect(new Date(marked!.followedUpAt!).toString()).not.toBe("Invalid Date");
+
+    dbModule.setFollowUpStatus("sub-1", false);
+    expect(dbModule.getSubmission("sub-1")?.followedUpAt).toBeNull();
+  });
+});
+
+describe("getPendingFollowUps", () => {
+  it("includes only processed submissions with no followedUpAt yet", () => {
+    dbModule.saveProcessedSubmission(submission({ id: "sub-followed-up", timestamp: "29/08/2026 09:00:00" }), [validRow({})]);
+    dbModule.setFollowUpStatus("sub-followed-up", true);
+
+    dbModule.saveProcessedSubmission(submission({ id: "sub-failed", timestamp: "29/08/2026 09:00:00", status: "failed" }), []);
+
+    const pending = dbModule.getPendingFollowUps();
+    const ids = pending.map((s) => s.id);
+    expect(ids).toContain("sub-1"); // processed, never followed up
+    expect(ids).not.toContain("sub-followed-up");
+    expect(ids).not.toContain("sub-failed");
+  });
+
+  it("orders oldest submission first", () => {
+    dbModule.saveProcessedSubmission(submission({ id: "sub-oldest", timestamp: "01/01/2026 08:00:00" }), []);
+    dbModule.saveProcessedSubmission(submission({ id: "sub-newest", timestamp: "31/12/2026 08:00:00" }), []);
+
+    const pending = dbModule.getPendingFollowUps();
+    const oldestIndex = pending.findIndex((s) => s.id === "sub-oldest");
+    const newestIndex = pending.findIndex((s) => s.id === "sub-newest");
+    expect(oldestIndex).toBeGreaterThanOrEqual(0);
+    expect(newestIndex).toBeGreaterThan(oldestIndex);
+  });
 });
 
 describe("getSubmissionRows", () => {
@@ -105,6 +145,31 @@ describe("getSubmissionRows", () => {
     expect(rows).toHaveLength(2);
     const invalid = rows.find((r) => r.status === "invalid")!;
     expect(invalid.errors).toEqual(["NIK harus 16 digit angka"]);
+  });
+
+  it("round-trips warnings and nikNumericRisk through save -> getSubmissionRows/getRawSubmissionRows/getReportRows", () => {
+    dbModule.saveProcessedSubmission(
+      submission({ id: "sub-nik-risk", validCount: 1, invalidCount: 0 }),
+      [
+        validRow({
+          rowNumber: 7,
+          nik: "9407199254740991",
+          nikNumericRisk: true,
+          warnings: ["NIK dibaca dari sel bertipe Angka dan berpotensi kehilangan presisi (kode provinsi 90+) — mohon verifikasi manual dari file asli"],
+        }),
+      ]
+    );
+
+    const rows = dbModule.getSubmissionRows("sub-nik-risk");
+    expect(rows[0].warnings).toHaveLength(1);
+    expect(rows[0].warnings[0]).toContain("presisi");
+    expect(rows[0].status).toBe("valid"); // a warning must never flip status
+
+    const raw = dbModule.getRawSubmissionRows("sub-nik-risk");
+    expect(raw[0].nikNumericRisk).toBe(true);
+
+    const reportRows = dbModule.getReportRows("sub-nik-risk");
+    expect(reportRows[0].warnings).toHaveLength(1);
   });
 });
 

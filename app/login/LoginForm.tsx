@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Lock, Mail, ShieldCheck } from "lucide-react";
+import { ThemeToggle } from "../../components/ThemeToggle";
 
 // Total time the loading screen holds before navigating, and the status-text beats within it.
 const LOADING_DURATION_MS = 2000;
@@ -100,6 +101,9 @@ export function LoginForm() {
 
   return (
     <div className="login-shell">
+      <div style={{ position: "fixed", top: 20, right: 20 }}>
+        <ThemeToggle />
+      </div>
       <div className="login-card">
         {success ? (
           <LoginLoadingScreen onDone={handleLoadingDone} />

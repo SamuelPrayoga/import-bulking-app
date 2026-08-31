@@ -135,6 +135,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
         errorMessage: null,
         importMethod,
         mappingScore,
+        followedUpAt: null,
       };
 
       saveProcessedSubmission(submission, validatedRows);
@@ -171,6 +172,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
             errorMessage: message,
             importMethod: "template",
             mappingScore: null,
+            followedUpAt: null,
           },
           []
         );

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import { parseSubmissionFile } from "./parseTemplate";
+import { isNikNumericRisk, parseSubmissionFile } from "./parseTemplate";
 
 async function buildFixtureWorkbook(dataRows: string[][]): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
@@ -61,6 +61,38 @@ describe("parseSubmissionFile (synthetic fixture)", () => {
     const result = await parseSubmissionFile(buffer);
     expect(result.rows).toHaveLength(2);
     expect(result.rows.map((r) => r.nama)).toEqual(["Budi Santoso", "Ani Wijaya"]);
+  });
+
+  it("flags a NIK read from a Number-formatted cell as at-risk once it exceeds what a 64-bit float can represent exactly (province code 90+)", async () => {
+    const buffer = await buildFixtureWorkbook([]);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    const sheet = workbook.getWorksheet("Form")!;
+    // Row 7: a Papua-region NIK (province 94) typed as a Number — at risk.
+    sheet.getRow(7).getCell(2).value = "Budi Papua";
+    sheet.getRow(7).getCell(3).value = 9407199254740991; // numeric, not a string
+    // Row 8: the same magnitude of NIK but stored as Text — always safe regardless of value.
+    sheet.getRow(8).getCell(2).value = "Ani Papua";
+    sheet.getRow(8).getCell(3).value = "9407199254740991";
+    // Row 9: a normal-range NIK (province 18) typed as a Number — safe, well under the float limit.
+    sheet.getRow(9).getCell(2).value = "Citra Lampung";
+    sheet.getRow(9).getCell(3).value = 1811010101900001;
+    const rewritten = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const result = await parseSubmissionFile(rewritten);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0]).toMatchObject({ nama: "Budi Papua", nikNumericRisk: true });
+    expect(result.rows[1]).toMatchObject({ nama: "Ani Papua", nikNumericRisk: false });
+    expect(result.rows[2]).toMatchObject({ nama: "Citra Lampung", nikNumericRisk: false });
+  });
+
+  it("isNikNumericRisk: only true for a Number-type cell whose value is >= Number.MAX_SAFE_INTEGER", () => {
+    const numberCell = { type: ExcelJS.ValueType.Number } as ExcelJS.Cell;
+    const stringCell = { type: ExcelJS.ValueType.String } as ExcelJS.Cell;
+    expect(isNikNumericRisk(numberCell, "9407199254740991")).toBe(true);
+    expect(isNikNumericRisk(numberCell, "1811010101900001")).toBe(false); // below the float limit
+    expect(isNikNumericRisk(stringCell, "9407199254740991")).toBe(false); // text, never at risk
+    expect(isNikNumericRisk(numberCell, "not-16-digits")).toBe(false);
   });
 
   it("reads a name that Excel auto-linked as a hyperlink with nested rich text (e.g. '...M.Si')", async () => {

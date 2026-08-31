@@ -67,6 +67,7 @@ function validateRow(
   nikCounts: Map<string, number>
 ): ValidatedRow {
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   // Nama is standardized to uppercase — source files mix casing PIC by PIC ("Budi Santoso" vs
   // "BUDI SANTOSO"), so this keeps the cleaned/exported output consistent.
@@ -97,6 +98,14 @@ function validateRow(
           `NIK sudah terdaftar pada submission sebelumnya (PIC: ${existing.picName}, ${existing.timestamp})`
         );
       }
+      // Not an error — we can't know the true original digits from here, only that this specific
+      // one is at risk. A warning tells the operator to go check the source file by hand instead
+      // of either silently trusting a possibly-corrupted NIK or blocking a possibly-fine one.
+      if (row.nikNumericRisk) {
+        warnings.push(
+          "NIK dibaca dari sel bertipe Angka dan berpotensi kehilangan presisi (kode provinsi 90+) — mohon verifikasi manual dari file asli"
+        );
+      }
     }
   }
 
@@ -121,6 +130,7 @@ function validateRow(
     kotaKabupaten,
     status: errors.length === 0 ? "valid" : "invalid",
     errors,
+    warnings,
     kodeProv: provinceRef?.provinceCode ?? null,
     kodeKota: cityRef?.cityCode ?? null,
     jobId: jobRef?.jobId ?? null,

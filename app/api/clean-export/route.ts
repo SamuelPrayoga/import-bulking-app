@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getReportRows, getSubmission } from "../../../lib/db";
 import { buildCleanConsolidatedFile, buildCleanSubmissionFile } from "../../../lib/cleanExport";
 import { reportToBuffer } from "../../../lib/report";
+import { recordAuditEvent } from "../../../lib/auditLog";
 
 export async function GET(request: NextRequest) {
   const submissionId = request.nextUrl.searchParams.get("submissionId") ?? undefined;
@@ -12,6 +13,14 @@ export async function GET(request: NextRequest) {
     : buildCleanConsolidatedFile(rows);
 
   const buffer = await reportToBuffer(workbook);
+
+  const ip = request.headers.get("x-forwarded-for") ?? "local";
+  recordAuditEvent(
+    "clean_export_download",
+    process.env.ADMIN_EMAIL ?? "-",
+    ip,
+    submissionId ? `Data bersih per submission (${submissionId})` : "Data bersih gabungan (semua submission)"
+  );
 
   const filename = submissionId
     ? `data-bersih-${submissionId}.xlsx`

@@ -98,6 +98,13 @@ export function RowsReviewTable({ rows }: { rows: ValidatedRow[] }) {
                       ))}
                     </ul>
                   )}
+                  {row.warnings.length > 0 && (
+                    <ul className="warnings-list">
+                      {row.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  )}
                 </td>
               </tr>
             ))}
