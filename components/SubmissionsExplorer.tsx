@@ -6,14 +6,17 @@ import { useMemo } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  Briefcase,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   Eye,
   FileWarning,
+  MapPinX,
   MessageCircle,
   Search,
+  UserRoundX,
   X,
   XCircle,
 } from "lucide-react";
@@ -49,6 +52,9 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
   const sheetFilter = (searchParams.get("sheet") as SheetFilter) ?? "all";
   const followUpFilter = (searchParams.get("followup") as FollowUpFilter) ?? "all";
   const kabKotaFilter = searchParams.get("kabkota") ?? "all";
+  const nameMismatchFilter = searchParams.get("nameMismatch") === "1";
+  const kabKotaAutoFixFilter = searchParams.get("kabkotaAutoFix") === "1";
+  const jobFallbackFilter = searchParams.get("jobFallback") === "1";
   const sortOrder = (searchParams.get("sort") as SortOrder) ?? "desc";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
 
@@ -71,7 +77,10 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
     const totalInvalidRows = submissions.reduce((sum, s) => sum + s.invalidCount, 0);
     const failedCount = submissions.filter((s) => s.status === "failed").length;
     const sheetDoneCount = submissions.filter((s) => isSheetStatusDone(s.sheetStatus)).length;
-    return { totalValidRows, totalInvalidRows, failedCount, sheetDoneCount };
+    const nameMismatchCount = submissions.filter((s) => s.hasNameMismatch).length;
+    const kabKotaAutoFixCount = submissions.filter((s) => s.hasKabKotaAutoFix).length;
+    const jobFallbackCount = submissions.filter((s) => s.hasJobFallback).length;
+    return { totalValidRows, totalInvalidRows, failedCount, sheetDoneCount, nameMismatchCount, kabKotaAutoFixCount, jobFallbackCount };
   }, [submissions]);
 
   const kabKotaOptions = useMemo(() => {
@@ -92,6 +101,9 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
       if (followUpFilter === "done" && !s.followedUpAt) return false;
       if (followUpFilter === "pending" && s.followedUpAt) return false;
       if (kabKotaFilter !== "all" && (s.declaredKabKota || "(kosong)") !== kabKotaFilter) return false;
+      if (nameMismatchFilter && !s.hasNameMismatch) return false;
+      if (kabKotaAutoFixFilter && !s.hasKabKotaAutoFix) return false;
+      if (jobFallbackFilter && !s.hasJobFallback) return false;
       if (!q) return true;
       return (
         s.picName.toLowerCase().includes(q) ||
@@ -100,7 +112,7 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
         s.declaredProvinsi.toLowerCase().includes(q)
       );
     });
-  }, [submissions, query, statusFilter, sheetFilter, followUpFilter, kabKotaFilter]);
+  }, [submissions, query, statusFilter, sheetFilter, followUpFilter, kabKotaFilter, nameMismatchFilter, kabKotaAutoFixFilter, jobFallbackFilter]);
 
   const sorted = useMemo(() => {
     const withTime = filtered.map((s) => ({ s, t: parseFormTimestamp(s.timestamp) }));
@@ -109,7 +121,14 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
   }, [filtered, sortOrder]);
 
   const hasActiveFilters = Boolean(
-    query || statusFilter !== "all" || sheetFilter !== "all" || followUpFilter !== "all" || kabKotaFilter !== "all"
+    query ||
+      statusFilter !== "all" ||
+      sheetFilter !== "all" ||
+      followUpFilter !== "all" ||
+      kabKotaFilter !== "all" ||
+      nameMismatchFilter ||
+      kabKotaAutoFixFilter ||
+      jobFallbackFilter
   );
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
@@ -215,6 +234,30 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
             ))}
           </select>
 
+          <div className="filter-tabs">
+            <button
+              className={nameMismatchFilter ? "active" : ""}
+              onClick={() => updateParams({ nameMismatch: nameMismatchFilter ? null : "1", page: null })}
+              title="Submission yang punya baris dengan NIK sama tapi nama berbeda dari submission sebelumnya"
+            >
+              <UserRoundX size={13} /> Nama Berbeda ({totals.nameMismatchCount})
+            </button>
+            <button
+              className={kabKotaAutoFixFilter ? "active" : ""}
+              onClick={() => updateParams({ kabkotaAutoFix: kabKotaAutoFixFilter ? null : "1", page: null })}
+              title="Submission yang punya baris dengan Kota/Kabupaten diganti otomatis ke kab/kota PIC karena tidak sesuai Provinsi"
+            >
+              <MapPinX size={13} /> Kab/Kota Diganti ({totals.kabKotaAutoFixCount})
+            </button>
+            <button
+              className={jobFallbackFilter ? "active" : ""}
+              onClick={() => updateParams({ jobFallback: jobFallbackFilter ? null : "1", page: null })}
+              title="Submission yang punya baris dengan JOB tidak dikenali, otomatis diganti ke 'Lainnya'"
+            >
+              <Briefcase size={13} /> JOB Diganti ({totals.jobFallbackCount})
+            </button>
+          </div>
+
           {hasActiveFilters && (
             <button onClick={() => router.replace(pathname, { scroll: false })}>
               <X size={13} /> Reset Filter
@@ -275,15 +318,44 @@ export function SubmissionsExplorer({ submissions }: { submissions: SubmissionRe
                         {s.declaredProvinsi} - {s.declaredKabKota}
                       </td>
                       <td>
-                        {s.status === "failed" ? (
-                          <span className="badge invalid">
-                            <XCircle size={12} /> Failed
-                          </span>
-                        ) : (
-                          <span className="badge valid">
-                            <CheckCircle2 size={12} /> Reviewed
-                          </span>
-                        )}
+                        <span className="cell-icon-label">
+                          {s.status === "failed" ? (
+                            <span className="badge invalid">
+                              <XCircle size={12} /> Failed
+                            </span>
+                          ) : (
+                            <span className="badge valid">
+                              <CheckCircle2 size={12} /> Reviewed
+                            </span>
+                          )}
+                          {s.hasNameMismatch && (
+                            <span
+                              className="muted-icon"
+                              title="Ada baris dengan NIK sama tapi nama berbeda dari submission sebelumnya — mohon verifikasi manual"
+                              style={{ color: "var(--warning)" }}
+                            >
+                              <UserRoundX size={14} />
+                            </span>
+                          )}
+                          {s.hasKabKotaAutoFix && (
+                            <span
+                              className="muted-icon"
+                              title="Ada baris dengan Kota/Kabupaten diganti otomatis ke kab/kota PIC karena tidak sesuai Provinsi — mohon verifikasi manual"
+                              style={{ color: "var(--warning)" }}
+                            >
+                              <MapPinX size={14} />
+                            </span>
+                          )}
+                          {s.hasJobFallback && (
+                            <span
+                              className="muted-icon"
+                              title="Ada baris dengan JOB tidak dikenali, otomatis diganti ke 'Lainnya' — mohon verifikasi manual"
+                              style={{ color: "var(--warning)" }}
+                            >
+                              <Briefcase size={14} />
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td>
                         <span className={`badge ${isSheetStatusDone(s.sheetStatus) ? "valid" : "warning"}`}>

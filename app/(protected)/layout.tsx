@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BarChart3, DatabaseBackup, History, MessageCircle, ShieldCheck } from "lucide-react";
+import { BarChart3, DatabaseBackup, Globe, History, MessageCircle, ShieldCheck } from "lucide-react";
 import { LogoutButton } from "../../components/LogoutButton";
 import { ThemeToggle } from "../../components/ThemeToggle";
 
@@ -29,6 +29,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           <Link className="btn secondary btn-sm" href="/audit-log">
             <History size={13} /> Log Aktivitas
           </Link>
+          <a
+            className="btn secondary btn-sm"
+            href="/dashboard-publik"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Halaman publik (tanpa login) untuk PIC cek status submission mereka sendiri"
+          >
+            <Globe size={13} /> Dashboard Publik
+          </a>
           <ThemeToggle />
           <LogoutButton />
         </div>

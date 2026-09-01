@@ -122,6 +122,38 @@ describe("parseSubmissionFile (synthetic fixture)", () => {
     const result = await parseSubmissionFile(buffer);
     expect(result.rows).toEqual([]);
   });
+
+  it("finds the header (and so the real data) even when a PIC's edits shift it off the template's usual row 6", async () => {
+    // Real case: a PIC's file had the header at row 4 instead of row 6 (rows deleted/inserted
+    // above it) — reading from the hardcoded row 7 silently dropped the first two agents (rows
+    // 5-6) with no error at all, since row 7 onward still looked like valid data.
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Form");
+    sheet.getCell("C2").value = "ACEH";
+    sheet.getRow(4).values = ["No", "Nama ", "NIK", "No WA", "JOB", "Kota Kabupaten"];
+    sheet.getRow(5).values = ["1", "ABDUL MALIK,S,H", "1110111203780001", "6285262442014", "POLRI", "ACEH SINGKIL"];
+    sheet.getRow(6).values = ["2", "JUNAIDI AZHAR", "1110101803770001", "6285297795767", "POLRI", "ACEH SINGKIL"];
+    sheet.getRow(7).values = ["3", "SUPARMAN", "1110060912790002", "6285270068062", "POLRI", "ACEH SINGKIL"];
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const result = await parseSubmissionFile(buffer);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows.map((r) => r.nama)).toEqual(["ABDUL MALIK,S,H", "JUNAIDI AZHAR", "SUPARMAN"]);
+    expect(result.rows[0].rowNumber).toBe(5);
+  });
+
+  it("falls back to the template's usual row 7 when no row in the search window matches the header labels at all", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Form");
+    sheet.getCell("C2").value = "LAMPUNG";
+    // No header row anywhere — data placed straight at row 7 as if the template's usual layout held.
+    sheet.getRow(7).values = ["1", "Budi Santoso", "1811010101900001", "081234567890", "Pendamping PKH", "MESUJI"];
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const result = await parseSubmissionFile(buffer);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ rowNumber: 7, nama: "Budi Santoso" });
+  });
 });
 
 describe("parseSubmissionFile (real Template File.xlsx)", () => {

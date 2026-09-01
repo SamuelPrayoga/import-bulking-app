@@ -42,6 +42,10 @@ function submission(overrides: Partial<SubmissionRecord> = {}): SubmissionRecord
     importMethod: "template",
     mappingScore: null,
     followedUpAt: null,
+    hasNameMismatch: false,
+    hasKabKotaAutoFix: false,
+    hasJobFallback: false,
+    sheetRowNumber: 5,
     ...overrides,
   };
 }
@@ -110,6 +114,64 @@ describe("listSubmissions / getSubmission", () => {
 
     dbModule.setFollowUpStatus("sub-1", false);
     expect(dbModule.getSubmission("sub-1")?.followedUpAt).toBeNull();
+  });
+});
+
+describe("findSubmissionsByEmail", () => {
+  it("finds a submission by its email", () => {
+    const found = dbModule.findSubmissionsByEmail("pic@example.com");
+    expect(found.some((s) => s.id === "sub-1")).toBe(true);
+  });
+
+  it("matches case-insensitively", () => {
+    const found = dbModule.findSubmissionsByEmail("PIC@EXAMPLE.COM");
+    expect(found.some((s) => s.id === "sub-1")).toBe(true);
+  });
+
+  it("returns nothing for an email that never submitted anything", () => {
+    expect(dbModule.findSubmissionsByEmail("someone-else@example.com")).toEqual([]);
+  });
+
+  it("returns an empty array for blank input instead of matching everything", () => {
+    expect(dbModule.findSubmissionsByEmail("")).toEqual([]);
+  });
+});
+
+describe("updateSubmissionCounts", () => {
+  it("keeps hasKabKotaAutoFix true once set, even if a later call passes false", () => {
+    // The auto-fix corrects a row's kota_kabupaten in place, so a later revalidation pass over the
+    // now-consistent data finds nothing left to flag — this must not silently erase the fact that
+    // a fix was applied, or the follow-up filter built on it loses exactly the rows it exists for.
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, false, true, false);
+    expect(dbModule.getSubmission("sub-1")?.hasKabKotaAutoFix).toBe(true);
+
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, false, false, false);
+    expect(dbModule.getSubmission("sub-1")?.hasKabKotaAutoFix).toBe(true);
+  });
+
+  it("keeps hasJobFallback true once set, even if a later call passes false — same reasoning: the fix overwrites job in place", () => {
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, false, false, true);
+    expect(dbModule.getSubmission("sub-1")?.hasJobFallback).toBe(true);
+
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, false, false, false);
+    expect(dbModule.getSubmission("sub-1")?.hasJobFallback).toBe(true);
+  });
+
+  it("does not make hasNameMismatch sticky — it always reflects the latest call", () => {
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, true, false, false);
+    expect(dbModule.getSubmission("sub-1")?.hasNameMismatch).toBe(true);
+
+    dbModule.updateSubmissionCounts("sub-1", 2, 0, false, false, false);
+    expect(dbModule.getSubmission("sub-1")?.hasNameMismatch).toBe(false);
+  });
+});
+
+describe("updateSheetStatus", () => {
+  it("updates both sheet_status and sheet_row_number", () => {
+    dbModule.updateSheetStatus("sub-1", "Done", 42);
+    const found = dbModule.getSubmission("sub-1");
+    expect(found?.sheetStatus).toBe("Done");
+    expect(found?.sheetRowNumber).toBe(42);
   });
 });
 
@@ -188,6 +250,37 @@ describe("findNikInRegistry", () => {
   });
 });
 
+describe("findNikHistory", () => {
+  it("returns null for a NIK that was never submitted", () => {
+    expect(dbModule.findNikHistory("0000000000000000")).toBeNull();
+  });
+
+  it("returns the name recorded against a NIK from an earlier submission", () => {
+    const hit = dbModule.findNikHistory("1811010101900001");
+    expect(hit).toEqual({ nama: "Budi", picName: "Ani Wijaya", timestamp: "2026-08-29T10:00:00.000Z" });
+  });
+
+  it("returns the most recent occurrence when the same NIK was submitted more than once", () => {
+    dbModule.saveProcessedSubmission(
+      submission({
+        id: "sub-nik-history-2",
+        picName: "Citra",
+        timestamp: "2026-08-30T10:00:00.000Z",
+        processedAt: "2026-08-30T10:00:00.000Z",
+      }),
+      [validRow({ nik: "1811010101900001", nama: "Budi Santoso" }), invalidRow({ nik: "bad-nik" })]
+    );
+
+    const hit = dbModule.findNikHistory("1811010101900001");
+    expect(hit).toEqual({ nama: "Budi Santoso", picName: "Citra", timestamp: "2026-08-30T10:00:00.000Z" });
+  });
+
+  it("respects beforeProcessedAt, ignoring submissions processed after the cutoff", () => {
+    const hit = dbModule.findNikHistory("1811010101900001", "2026-08-30T00:00:00.000Z");
+    expect(hit).toEqual({ nama: "Budi", picName: "Ani Wijaya", timestamp: "2026-08-29T10:00:00.000Z" });
+  });
+});
+
 describe("getReportRows", () => {
   it("joins rows with their submission's PIC metadata", () => {
     const rows = dbModule.getReportRows();
@@ -204,5 +297,18 @@ describe("getReportRows", () => {
     const rows = dbModule.getReportRows("sub-2");
     expect(rows).toHaveLength(1);
     expect(rows[0].picName).toBe("Beni");
+  });
+
+  it("with pendingOnly, excludes rows from submissions whose sheet Status is already Done", () => {
+    dbModule.saveProcessedSubmission(submission({ id: "sub-pending", picName: "Citra", sheetStatus: "" }), [
+      validRow({ nik: "1811010101900098" }),
+    ]);
+    dbModule.saveProcessedSubmission(submission({ id: "sub-done", picName: "Dedi", sheetStatus: "Done" }), [
+      validRow({ nik: "1811010101900097" }),
+    ]);
+
+    const rows = dbModule.getReportRows(undefined, { pendingOnly: true });
+    expect(rows.some((r) => r.picName === "Citra")).toBe(true);
+    expect(rows.some((r) => r.picName === "Dedi")).toBe(false);
   });
 });

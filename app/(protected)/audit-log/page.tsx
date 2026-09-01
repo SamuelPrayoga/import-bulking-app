@@ -2,6 +2,8 @@ import Link from "next/link";
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   DatabaseBackup,
   Download,
   History,
@@ -14,6 +16,8 @@ import {
 import { listAuditLog, type AuditEventType } from "../../../lib/auditLog";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 25;
 
 const EVENT_META: Record<AuditEventType, { label: string; icon: React.ReactNode; badge: "valid" | "invalid" | "warning" | "neutral" }> = {
   login_success: { label: "Login Berhasil", icon: <CheckCircle2 size={12} />, badge: "valid" },
@@ -39,8 +43,18 @@ function formatTimestamp(iso: string): string {
   }
 }
 
-export default function AuditLogPage() {
+export default async function AuditLogPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { page: pageParam } = await searchParams;
   const entries = listAuditLog();
+
+  const page = Math.max(1, Number(pageParam ?? "1") || 1);
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageEntries = entries.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <>
@@ -61,45 +75,74 @@ export default function AuditLogPage() {
         {entries.length === 0 ? (
           <p className="muted">Belum ada aktivitas yang tercatat.</p>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Waktu</th>
-                  <th>Aktivitas</th>
-                  <th>Detail</th>
-                  <th>Aktor</th>
-                  <th>IP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => {
-                  const meta = EVENT_META[e.eventType];
-                  return (
-                    <tr key={e.id}>
-                      <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(e.timestamp)}</td>
-                      <td>
-                        {meta.badge === "neutral" ? (
-                          <span className="cell-icon-label">
-                            <span className="muted-icon">{meta.icon}</span>
-                            {meta.label}
-                          </span>
-                        ) : (
-                          <span className={`badge ${meta.badge}`}>
-                            {meta.icon}
-                            {meta.label}
-                          </span>
-                        )}
-                      </td>
-                      <td>{e.details}</td>
-                      <td>{e.actor}</td>
-                      <td className="muted">{e.ip}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Waktu</th>
+                    <th>Aktivitas</th>
+                    <th>Detail</th>
+                    <th>Aktor</th>
+                    <th>IP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageEntries.map((e) => {
+                    const meta = EVENT_META[e.eventType];
+                    return (
+                      <tr key={e.id}>
+                        <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(e.timestamp)}</td>
+                        <td>
+                          {meta.badge === "neutral" ? (
+                            <span className="cell-icon-label">
+                              <span className="muted-icon">{meta.icon}</span>
+                              {meta.label}
+                            </span>
+                          ) : (
+                            <span className={`badge ${meta.badge}`}>
+                              {meta.icon}
+                              {meta.label}
+                            </span>
+                          )}
+                        </td>
+                        <td>{e.details}</td>
+                        <td>{e.actor}</td>
+                        <td className="muted">{e.ip}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="pagination">
+              <span>
+                Menampilkan {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, entries.length)} dari{" "}
+                {entries.length}
+              </span>
+              <div className="pages">
+                {currentPage <= 1 ? (
+                  <button disabled>
+                    <ChevronLeft size={14} /> Sebelumnya
+                  </button>
+                ) : (
+                  <Link className="btn" href={`/audit-log?page=${currentPage - 1}`}>
+                    <ChevronLeft size={14} /> Sebelumnya
+                  </Link>
+                )}
+                {currentPage >= totalPages ? (
+                  <button disabled>
+                    Selanjutnya <ChevronRight size={14} />
+                  </button>
+                ) : (
+                  <Link className="btn" href={`/audit-log?page=${currentPage + 1}`}>
+                    Selanjutnya <ChevronRight size={14} />
+                  </Link>
+                )}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </>

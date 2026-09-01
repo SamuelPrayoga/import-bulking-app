@@ -5,33 +5,24 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Loader2, MessageCircle } from "lucide-react";
 
 /**
- * WhatsApp's wa.me click-to-chat links only support pre-filled text — there's no way to attach a
- * file through the link itself (that would need the full WhatsApp Business API, which the project
- * deliberately avoided so sending stays a manual, operator-reviewed action). This works around
- * that: trigger the report download and open the WA chat in the same synchronous click handler,
- * so the operator just has to drag the file that's already in their Downloads into the chat that's
- * already open. Both calls have to stay synchronous (no `await` between them) or the browser's
- * popup blocker can silently swallow the window.open().
+ * Opens the WA chat with the draft pre-filled. The report file itself is downloaded separately via
+ * the "Download Laporan Review" button above (on the submission detail page) — this used to also
+ * trigger that download automatically, but that's a separate, manual step now.
  *
  * This click is also treated as the "followed up with this PIC" signal — there's no separate
- * mark-as-followed-up button; taking the actual follow-up action (downloading the report and
- * opening the chat) is what marks it, so there's nothing extra for the operator to remember.
+ * mark-as-followed-up button; opening the chat is what marks it, so there's nothing extra for the
+ * operator to remember.
  */
-function downloadReportAndOpenWhatsApp(submissionId: string, waLink: string): Promise<unknown> {
-  const a = document.createElement("a");
-  a.href = `/api/report?submissionId=${submissionId}`;
-  a.download = "";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-
+function openWhatsApp(submissionId: string, waLink: string): Promise<{ sheetUpdateError: string | null } | undefined> {
   window.open(waLink, "_blank", "noopener,noreferrer");
 
   return fetch(`/api/submissions/${submissionId}/follow-up`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ followedUp: true }),
-  }).catch(() => {});
+  })
+    .then((res) => res.json())
+    .catch(() => undefined);
 }
 
 export function WhatsAppDraftPanel({ submissionId }: { submissionId: string }) {
@@ -40,6 +31,7 @@ export function WhatsAppDraftPanel({ submissionId }: { submissionId: string }) {
   const [waLink, setWaLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sheetUpdateWarning, setSheetUpdateWarning] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,9 +74,14 @@ export function WhatsAppDraftPanel({ submissionId }: { submissionId: string }) {
         {waLink ? (
           <button
             className="primary"
-            onClick={() => downloadReportAndOpenWhatsApp(submissionId, waLink).then(() => router.refresh())}
+            onClick={() =>
+              openWhatsApp(submissionId, waLink).then((result) => {
+                setSheetUpdateWarning(result?.sheetUpdateError ?? null);
+                router.refresh();
+              })
+            }
           >
-            <MessageCircle size={14} /> Download Laporan &amp; Buka WhatsApp
+            <MessageCircle size={14} /> Buka WhatsApp
           </button>
         ) : (
           <span className="badge warning">
@@ -94,9 +91,17 @@ export function WhatsAppDraftPanel({ submissionId }: { submissionId: string }) {
       </div>
       {waLink && (
         <p className="muted" style={{ marginTop: 8, fontSize: 12.5 }}>
-          Laporan otomatis ke-download dan chat WhatsApp langsung terbuka dengan draft pesan di
-          atas — tinggal tarik (drag) file laporan yang baru ke-download ke chat itu, lalu kirim.
-          Submission ini otomatis ditandai sudah ditindaklanjuti.
+          Chat WhatsApp langsung terbuka dengan draft pesan di atas — kalau perlu lampirkan
+          laporan, download dulu lewat tombol "Download Laporan Review" di atas, lalu tarik (drag)
+          filenya ke chat itu. Submission ini otomatis ditandai sudah ditindaklanjuti, dan kolom
+          Status (K) di Google Sheet otomatis diisi "Done".
+        </p>
+      )}
+      {sheetUpdateWarning && (
+        <p className="alert warning" style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertTriangle size={14} /> Status lokal sudah tersimpan, tapi gagal update kolom Status
+          (K) di Google Sheet: {sheetUpdateWarning}. Cek apakah service account sudah punya akses
+          Editor ke Sheet-nya.
         </p>
       )}
     </div>

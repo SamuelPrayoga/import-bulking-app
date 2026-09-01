@@ -10,9 +10,9 @@ import {
   updateSubmissionFileProvinsi,
   clearNikRegistry,
   registerNikForBackfill,
-  findNikInRegistry,
+  findNikHistory,
 } from "../lib/db";
-import { validateSubmissionRows } from "../lib/validate";
+import { isJobFallbackWarning, isKabKotaAutoFixWarning, isNameMismatchWarning, validateSubmissionRows } from "../lib/validate";
 import type { RawAgentRow } from "../types/index";
 
 const NIK_RE = /^\d{16}$/;
@@ -51,14 +51,22 @@ async function main() {
 
     const validated = validateSubmissionRows(agentRows, {
       fileProvinsi,
-      nikExistsInRegistry: findNikInRegistry,
+      declaredProvinsi: submission.declaredProvinsi,
+      declaredKabKota: submission.declaredKabKota,
+      findNikHistory: (nik) => findNikHistory(nik, submission.processedAt),
     });
 
     let validCount = 0;
+    let hasNameMismatch = false;
+    let hasKabKotaAutoFix = false;
+    let hasJobFallback = false;
     validated.forEach((v, i) => {
       const dbId = rawRows[i].dbId;
       updateRowValidation(dbId, {
         nama: v.nama,
+        nik: v.nik,
+        noWa: v.noWa,
+        job: v.job,
         kotaKabupaten: v.kotaKabupaten,
         status: v.status,
         errors: v.errors,
@@ -68,12 +76,15 @@ async function main() {
         jobId: v.jobId,
       });
       if (v.status === "valid") validCount++;
+      if (v.warnings.some(isNameMismatchWarning)) hasNameMismatch = true;
+      if (v.warnings.some(isKabKotaAutoFixWarning)) hasKabKotaAutoFix = true;
+      if (v.warnings.some(isJobFallbackWarning)) hasJobFallback = true;
       if (NIK_RE.test(v.nik)) {
         registerNikForBackfill(v.nik, submission.id, dbId, submission.picName, submission.timestamp);
       }
     });
 
-    updateSubmissionCounts(submission.id, validCount, validated.length - validCount);
+    updateSubmissionCounts(submission.id, validCount, validated.length - validCount, hasNameMismatch, hasKabKotaAutoFix, hasJobFallback);
     totalRows += validated.length;
     totalValid += validCount;
   }

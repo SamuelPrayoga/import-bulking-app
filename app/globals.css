@@ -82,6 +82,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 24px;
   padding-bottom: 4px;
 }
@@ -89,6 +91,7 @@ body {
 .app-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -169,6 +172,7 @@ button, .btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap;
   transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease, color 120ms ease,
     box-shadow 120ms ease;
 }
@@ -198,14 +202,17 @@ button.primary:hover, .btn.primary:hover {
   color: #fff;
 }
 
+/* Neutral, not accent-colored — reserve the brand color for .primary alone so it still reads as
+   "the one action that matters" instead of competing with every nav link/secondary action. */
 button.secondary, .btn.secondary {
-  background: var(--accent-soft);
-  border-color: var(--accent-soft);
-  color: var(--accent-hover);
+  background: var(--panel-soft);
+  border-color: var(--border);
+  color: var(--text-soft);
 }
 
 button.secondary:hover, .btn.secondary:hover {
-  border-color: var(--accent-border-hover);
+  border-color: var(--border-hover);
+  color: var(--text);
 }
 
 button:disabled, button:disabled:hover {
@@ -264,6 +271,17 @@ tr.row-invalid {
 }
 
 tr.row-invalid:hover {
+  background: var(--invalid-hover-bg);
+}
+
+/* Status stays "Valid" (the badge says so) — this is purely a "look closer" nudge for a NIK
+   that's been seen in an earlier submission, not a validity signal, so it's deliberately the same
+   red family as row-invalid without being gated the same way. */
+tr.row-nik-repeat {
+  background: var(--invalid-bg);
+}
+
+tr.row-nik-repeat:hover {
   background: var(--invalid-hover-bg);
 }
 

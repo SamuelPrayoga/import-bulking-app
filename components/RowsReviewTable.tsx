@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, Search, XCircle } from "lucide-react";
 import type { ValidatedRow } from "../types/index";
+import { isNikRepeatWarning } from "../lib/validate";
 
 type Filter = "all" | "valid" | "invalid";
 const PAGE_SIZE = 25;
@@ -76,38 +77,45 @@ export function RowsReviewTable({ rows }: { rows: ValidatedRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((row) => (
-              <tr key={row.rowNumber} className={row.status === "invalid" ? "row-invalid" : ""}>
-                <td>{row.rowNumber}</td>
-                <td>{row.nama}</td>
-                <td>{row.nik}</td>
-                <td>{row.noWa}</td>
-                <td>{row.job}</td>
-                <td>{row.kotaKabupaten}</td>
-                <td>
-                  <span className={`badge ${row.status}`}>
-                    {row.status === "valid" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                    {row.status === "valid" ? "Valid" : "Tidak Valid"}
-                  </span>
-                </td>
-                <td>
-                  {row.errors.length > 0 && (
-                    <ul className="errors-list">
-                      {row.errors.map((e, i) => (
-                        <li key={i}>{e}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {row.warnings.length > 0 && (
-                    <ul className="warnings-list">
-                      {row.warnings.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {pageRows.map((row) => {
+              // A row can be status "valid" and still deserve a visual nudge — NIK-repeat warnings
+              // are deliberately non-blocking (see lib/validate.ts), so the red highlight is the
+              // only cue the operator gets that this one's worth a second look.
+              const nikRepeat = row.warnings.some(isNikRepeatWarning);
+              const rowClass = row.status === "invalid" ? "row-invalid" : nikRepeat ? "row-nik-repeat" : "";
+              return (
+                <tr key={row.rowNumber} className={rowClass}>
+                  <td>{row.rowNumber}</td>
+                  <td>{row.nama}</td>
+                  <td>{row.nik}</td>
+                  <td>{row.noWa}</td>
+                  <td>{row.job}</td>
+                  <td>{row.kotaKabupaten}</td>
+                  <td>
+                    <span className={`badge ${row.status}`}>
+                      {row.status === "valid" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                      {row.status === "valid" ? "Valid" : "Tidak Valid"}
+                    </span>
+                  </td>
+                  <td>
+                    {row.errors.length > 0 && (
+                      <ul className="errors-list">
+                        {row.errors.map((e, i) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {row.warnings.length > 0 && (
+                      <ul className="warnings-list">
+                        {row.warnings.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {filteredRows.length === 0 && <p className="muted">Tidak ada baris untuk filter/pencarian ini.</p>}

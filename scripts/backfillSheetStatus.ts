@@ -1,6 +1,6 @@
-// One-time backfill: fills in sheet_status for submissions that were processed before that
-// column existed, by re-reading the response Sheet (fast — one Sheets API call, no Drive
-// downloads) and matching on submission id.
+// One-time backfill: fills in sheet_status and sheet_row_number for submissions that were
+// processed before those columns existed, by re-reading the response Sheet (fast — one Sheets
+// API call, no Drive downloads) and matching on submission id.
 try {
   process.loadEnvFile(".env.local");
 } catch {
@@ -16,11 +16,11 @@ async function main() {
   let updated = 0;
   for (const response of responses) {
     if (submissionExists(response.id)) {
-      updateSheetStatus(response.id, response.sheetStatus);
+      updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
       updated++;
     }
   }
-  console.log(`Updated sheet_status for ${updated} existing submissions.`);
+  console.log(`Updated sheet_status/sheet_row_number for ${updated} existing submissions.`);
 }
 
 main().catch((err) => {

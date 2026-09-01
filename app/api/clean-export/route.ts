@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReportRows, getSubmission } from "../../../lib/db";
-import { buildCleanConsolidatedFile, buildCleanSubmissionFile } from "../../../lib/cleanExport";
+import { buildCleanConsolidatedFile, buildCleanSubmissionFile, dedupeByNik } from "../../../lib/cleanExport";
 import { reportToBuffer } from "../../../lib/report";
 import { recordAuditEvent } from "../../../lib/auditLog";
 
 export async function GET(request: NextRequest) {
   const submissionId = request.nextUrl.searchParams.get("submissionId") ?? undefined;
-  const rows = getReportRows(submissionId);
+  const pendingOnly = request.nextUrl.searchParams.get("pending") === "1";
+  // A pending submission is often a resubmission/correction of an earlier one still pending too —
+  // only the "sheet pending" file feeds the destination CMS directly, so NIK must be unique there.
+  const rows = pendingOnly ? dedupeByNik(getReportRows(submissionId, { pendingOnly })) : getReportRows(submissionId);
 
   const workbook = submissionId
     ? buildCleanSubmissionFile(getSubmission(submissionId)?.fileProvinsi ?? "", rows)
@@ -19,12 +22,14 @@ export async function GET(request: NextRequest) {
     "clean_export_download",
     process.env.ADMIN_EMAIL ?? "-",
     ip,
-    submissionId ? `Data bersih per submission (${submissionId})` : "Data bersih gabungan (semua submission)"
+    submissionId
+      ? `Data bersih per submission (${submissionId})`
+      : `Data bersih gabungan (${pendingOnly ? "sheet status Pending" : "semua submission"})`
   );
 
   const filename = submissionId
     ? `data-bersih-${submissionId}.xlsx`
-    : `data-bersih-gabungan-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    : `data-bersih-gabungan${pendingOnly ? "-pending" : ""}-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
   return new NextResponse(new Uint8Array(buffer), {
     headers: {

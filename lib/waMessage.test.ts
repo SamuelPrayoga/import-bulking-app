@@ -25,6 +25,10 @@ function submission(overrides: Partial<SubmissionRecord> = {}): SubmissionRecord
     importMethod: "template",
     mappingScore: null,
     followedUpAt: null,
+    hasNameMismatch: false,
+    hasKabKotaAutoFix: false,
+    hasJobFallback: false,
+    sheetRowNumber: 5,
     ...overrides,
   };
 }
@@ -56,18 +60,37 @@ describe("buildWaMessage", () => {
     expect(message).toContain("Tidak valid: 1 baris");
   });
 
-  it("lists invalid rows with their reasons", () => {
+  it("lists the invalid agent's name when there's just one", () => {
     const rows = [row({ status: "invalid", errors: ["NIK harus 16 digit angka"], rowNumber: 9, nama: "Citra" })];
     const message = buildWaMessage(submission({}), rows);
-    expect(message).toContain("Baris 9 (Citra): NIK harus 16 digit angka");
+    expect(message).toContain("- Citra");
   });
 
-  it("caps the detail list and points to the full report beyond 20 invalid rows", () => {
+  it("falls back to the row number when the name itself is blank", () => {
+    const rows = [row({ status: "invalid", errors: ["Nama kosong"], rowNumber: 9, nama: "" })];
+    const message = buildWaMessage(submission({}), rows);
+    expect(message).toContain("Baris 9 (nama kosong)");
+  });
+
+  it("lists at most 5 names and summarizes the rest as 'dan N data lainnya'", () => {
     const rows = Array.from({ length: 25 }, (_, i) =>
-      row({ status: "invalid", errors: ["NIK harus 16 digit angka"], rowNumber: 7 + i })
+      row({ status: "invalid", errors: ["NIK harus 16 digit angka"], rowNumber: 7 + i, nama: `Agen ${i}` })
     );
     const message = buildWaMessage(submission({ invalidCount: 25, validCount: 0 }), rows);
-    expect(message).toContain("+5 baris lainnya");
+    for (let i = 0; i < 5; i++) {
+      expect(message).toContain(`Agen ${i}`);
+    }
+    expect(message).toContain("dan 20 data lainnya");
+    expect(message).toContain("Detail lengkap per baris ada di laporan terlampir.");
+    expect(message).not.toContain("Agen 5");
+  });
+
+  it("doesn't add a 'dan N data lainnya' line when there are 5 or fewer invalid rows", () => {
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      row({ status: "invalid", errors: ["NIK harus 16 digit angka"], rowNumber: 7 + i, nama: `Agen ${i}` })
+    );
+    const message = buildWaMessage(submission({ invalidCount: 5, validCount: 0 }), rows);
+    expect(message).not.toContain("data lainnya");
   });
 
   it("adds a location-mismatch warning when the submission is flagged", () => {
@@ -80,12 +103,23 @@ describe("buildWaMessage", () => {
     expect(message).toContain("Valid: 1 baris (data sudah aktif)");
   });
 
-  it("closes by asking the PIC to re-check and re-upload if anything is off", () => {
-    const message = buildWaMessage(submission({}), [row({})]);
+  it("closes by asking the PIC to re-check and re-upload when there are invalid rows", () => {
+    const rows = [row({ status: "invalid", errors: ["NIK harus 16 digit angka"] })];
+    const message = buildWaMessage(submission({}), rows);
     expect(message).toContain(
       "Silakan cek kembali data yang sudah dikirim, dan apabila ada yang tidak sesuai, silakan upload kembali."
     );
   });
+
+  it("declares successful activation when every row is valid, instead of the re-check/re-upload closing", () => {
+    const message = buildWaMessage(submission({}), [row({}), row({ rowNumber: 8 })]);
+    expect(message).toContain(
+      "Sudah Berhasil Aktif sebagai Agen Perlinsos, silakan akses akun anda pada portal agen perlinsos."
+    );
+    expect(message).not.toContain("Silakan cek kembali data yang sudah dikirim");
+    expect(message).not.toContain("Nama agen yang datanya belum valid");
+  });
+
 });
 
 describe("buildWaLink", () => {

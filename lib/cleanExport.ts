@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { ReportRow } from "../types/index";
+import { parseFormTimestamp } from "./formTimestamp";
 
 // Mirrors the original template's "Form" sheet layout exactly: Provinsi label near the top,
 // header row 6, data from row 7, including the computed Kode Prov / Kode Kota / Job ID columns —
@@ -44,6 +45,22 @@ function buildFormSheet(workbook: ExcelJS.Workbook, provinsiLabel: string, rows:
   sheet.columns.forEach((col) => {
     col.width = 18;
   });
+}
+
+/**
+ * Collapses rows sharing the same NIK down to just one — the one from the most recent submission
+ * (by Form timestamp) — since a repeat NIK across submissions here is a resubmission/correction,
+ * not two distinct agents, and the destination this file feeds into needs NIK to be unique.
+ */
+export function dedupeByNik(rows: ReportRow[]): ReportRow[] {
+  const latestByNik = new Map<string, ReportRow>();
+  for (const row of rows) {
+    const existing = latestByNik.get(row.nik);
+    if (!existing || parseFormTimestamp(row.timestamp) >= parseFormTimestamp(existing.timestamp)) {
+      latestByNik.set(row.nik, row);
+    }
+  }
+  return [...latestByNik.values()];
 }
 
 /** Clean, template-shaped export of one submission's VALID rows only. */

@@ -27,6 +27,7 @@ function reportRow(overrides: Partial<ReportRow>): ReportRow {
     locationMismatch: false,
     declaredProvinsi: "LAMPUNG",
     declaredKabKota: "MESUJI",
+    sheetStatus: "",
     ...overrides,
   };
 }

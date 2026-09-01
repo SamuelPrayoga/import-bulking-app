@@ -2,7 +2,14 @@ import ExcelJS from "exceljs";
 import type { ParsedSubmissionFile, RawAgentRow } from "../types/index";
 
 const COL = { no: 1, nama: 2, nik: 3, noWa: 4, job: 5, kotaKabupaten: 6 } as const;
-const DATA_START_ROW = 7;
+// In the official template this header row is row 6 (data starts row 7) — but a PIC who deleted
+// or inserted rows above it shifts everything up or down, and reading from a hardcoded row then
+// silently skips or duplicates real rows without ever surfacing an error (seen for real: a PIC's
+// file had the header at row 4, so its first two agents at rows 5-6 were dropped with no trace).
+// Matched by exact label text instead, which stays correct regardless of position.
+const HEADER_ROW_LABELS = ["no", "nama", "nik", "no wa", "job", "kota kabupaten"];
+const HEADER_SEARCH_ROWS = 20;
+const DATA_START_ROW = 7; // fallback only, for the rare file where no row matches the header labels at all
 // The template pre-provisions formulas down to row 4797; stop well before that as a safety cap
 // against a corrupted/malicious file that never has a blank row.
 const MAX_ROW = 5000;
@@ -50,12 +57,22 @@ export async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
 // it. Only treat the table as finished once this many *consecutive* rows are all blank.
 const BLANK_ROW_TOLERANCE = 10;
 
+/** Finds the header row by its exact label text (case/whitespace-insensitive) and returns the row right after it — falls back to DATA_START_ROW if no row in the search window matches. */
+function findDataStartRow(sheet: ExcelJS.Worksheet): number {
+  for (let r = 1; r <= HEADER_SEARCH_ROWS; r++) {
+    const row = sheet.getRow(r);
+    const matches = HEADER_ROW_LABELS.every((label, i) => cellText(row.getCell(i + 1)).trim().toLowerCase() === label);
+    if (matches) return r + 1;
+  }
+  return DATA_START_ROW;
+}
+
 /**
  * Reads the "Form" sheet of one uploaded submission file: the declared Provinsi (C2) plus every
- * agent row from row 7 down to the start of a run of BLANK_ROW_TOLERANCE consecutive blank rows.
- * Throws if there's no sheet literally named "Form" — callers that want to fall back to
- * lib/smartMapping.ts for non-template files should catch that and pass the raw buffer to
- * `trySmartMap`.
+ * agent row from just after the detected header row down to the start of a run of
+ * BLANK_ROW_TOLERANCE consecutive blank rows. Throws if there's no sheet literally named "Form" —
+ * callers that want to fall back to lib/smartMapping.ts for non-template files should catch that
+ * and pass the raw buffer to `trySmartMap`.
  */
 export function parseFormSheet(workbook: ExcelJS.Workbook): ParsedSubmissionFile {
   const sheet = workbook.getWorksheet("Form");
@@ -67,7 +84,8 @@ export function parseFormSheet(workbook: ExcelJS.Workbook): ParsedSubmissionFile
 
   const rows: RawAgentRow[] = [];
   let blankStreak = 0;
-  for (let rowNumber = DATA_START_ROW; rowNumber <= MAX_ROW && blankStreak < BLANK_ROW_TOLERANCE; rowNumber++) {
+  const dataStartRow = findDataStartRow(sheet);
+  for (let rowNumber = dataStartRow; rowNumber <= MAX_ROW && blankStreak < BLANK_ROW_TOLERANCE; rowNumber++) {
     const row = sheet.getRow(rowNumber);
     const nikCell = row.getCell(COL.nik);
     const no = cellText(row.getCell(COL.no));

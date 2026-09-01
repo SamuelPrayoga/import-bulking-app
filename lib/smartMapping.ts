@@ -173,6 +173,15 @@ export function trySmartMap(buffer: Buffer): SmartMapResult | null {
       if (mapping.nik !== undefined && nik && !looksLikeNik(nik)) continue;
       if (mapping.nik !== undefined && !nik && !job && !noWa) continue;
 
+      // A row with JOB/Kota Kabupaten filled but neither a Nama nor a NIK at all is almost always
+      // a leftover drag-autofill artifact (a PIC pre-fills those two dropdown-ish columns down a
+      // block of rows before typing each agent in, then never gets to the rest) rather than a real
+      // distinct record — same idea as lib/parseTemplate.ts not counting a lone "No" as data.
+      // Counting these as real rows drags nikScore down and can sink an otherwise-clean file's
+      // confidence below the auto-accept threshold. Skipped like the noise rows above: not
+      // counted, but blankStreak untouched so real data further down is still read.
+      if (mapping.nama !== undefined && mapping.nik !== undefined && !nama && !nik) continue;
+
       blankStreak = 0;
       const nikNumericRisk = nikWasNumberCell && /^\d{16}$/.test(nik) && Number(nik) >= Number.MAX_SAFE_INTEGER;
       rawRows.push({ rowNumber: i + 1, no: String(rawRows.length + 1), nama, nik, noWa, job, kotaKabupaten, nikNumericRisk });

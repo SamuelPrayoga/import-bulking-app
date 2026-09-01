@@ -37,6 +37,10 @@ beforeAll(async () => {
       importMethod: "template",
       mappingScore: null,
       followedUpAt: null,
+      hasNameMismatch: false,
+      hasKabKotaAutoFix: false,
+      hasJobFallback: false,
+      sheetRowNumber: 5,
       ...overrides,
     };
   }

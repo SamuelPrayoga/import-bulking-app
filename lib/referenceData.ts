@@ -28,6 +28,20 @@ for (const c of referenceData.cities) {
   citiesByNameAndProvince.set(`${normalizeName(c.provinceName)}::${normalizeName(c.cityName)}`, c);
 }
 
+// PICs commonly drop the "Kota" prefix (writing "Sabang" instead of "Kota Sabang"). Safe to accept
+// the bare name whenever it doesn't already refer to something else in the same province — most
+// "Kota X" entries are the only place named X in their province, but ~25 provinces have both a
+// "Kota X" and a separate "X" kabupaten (e.g. Jawa Barat's "KOTA BOGOR" vs its own "BOGOR"
+// kabupaten), where the bare name is genuinely ambiguous and must be left alone.
+for (const c of referenceData.cities) {
+  const normalizedCity = normalizeName(c.cityName);
+  if (!normalizedCity.startsWith("KOTA ")) continue;
+  const bareKey = `${normalizeName(c.provinceName)}::${normalizedCity.slice("KOTA ".length)}`;
+  if (!citiesByNameAndProvince.has(bareKey)) {
+    citiesByNameAndProvince.set(bareKey, c);
+  }
+}
+
 const jobsByName = new Map<string, JobRef>();
 for (const j of referenceData.jobs) {
   jobsByName.set(normalizeName(j.jobName), j);
@@ -102,8 +116,20 @@ export function findCityByNameAndProvince(
   return undefined;
 }
 
+// PICs from certain institutions write their institution's name rather than the specific position
+// title our Master Data uses (e.g. a Polri PIC writing "POLRI" for every agent's JOB, when the
+// actual position is "Bhabinkamtibmas" — Polri's village-level community liaison role).
+const JOB_ALIASES: Record<string, string> = {
+  POLRI: "BHABINKAMTIBMAS",
+};
+
+function resolveJobName(jobName: string): string {
+  const normalized = normalizeName(jobName);
+  return JOB_ALIASES[normalized] ?? normalized;
+}
+
 export function findJobByName(jobName: string): JobRef | undefined {
-  return jobsByName.get(normalizeName(jobName));
+  return jobsByName.get(resolveJobName(jobName));
 }
 
 export function listJobNames(): string[] {

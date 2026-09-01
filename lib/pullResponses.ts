@@ -1,8 +1,8 @@
 import { downloadDriveFile, getFormResponses } from "./google";
 import { loadWorkbook, parseFormSheet } from "./parseTemplate";
 import { SMART_MAP_AUTO_ACCEPT_SCORE, trySmartMap } from "./smartMapping";
-import { checkProvinceMismatch, validateSubmissionRows } from "./validate";
-import { findNikInRegistry, saveProcessedSubmission, submissionExists, updateSheetStatus } from "./db";
+import { checkProvinceMismatch, isJobFallbackWarning, isKabKotaAutoFixWarning, isNameMismatchWarning, validateSubmissionRows } from "./validate";
+import { findNikHistory, saveProcessedSubmission, submissionExists, updateSheetStatus } from "./db";
 import type { RawAgentRow, SubmissionRecord } from "../types/index";
 
 export interface PullResponsesResult {
@@ -84,7 +84,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       // The response row itself (e.g. its "Status" column K) can still change after we've
       // already processed the file — that's just a Sheets read, cheap enough to refresh on
       // every pull without re-downloading or re-validating anything.
-      updateSheetStatus(response.id, response.sheetStatus);
+      updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
       result.alreadyProcessed++;
       continue;
     }
@@ -108,11 +108,16 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
 
       const validatedRows = validateSubmissionRows(rows, {
         fileProvinsi,
-        nikExistsInRegistry: findNikInRegistry,
+        declaredProvinsi: response.declaredProvinsi,
+        declaredKabKota: response.declaredKabKota,
+        findNikHistory,
       });
 
       const validCount = validatedRows.filter((r) => r.status === "valid").length;
       const invalidCount = validatedRows.length - validCount;
+      const hasNameMismatch = validatedRows.some((r) => r.warnings.some(isNameMismatchWarning));
+      const hasKabKotaAutoFix = validatedRows.some((r) => r.warnings.some(isKabKotaAutoFixWarning));
+      const hasJobFallback = validatedRows.some((r) => r.warnings.some(isJobFallbackWarning));
 
       const submission: SubmissionRecord = {
         id: response.id,
@@ -136,6 +141,10 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
         importMethod,
         mappingScore,
         followedUpAt: null,
+        hasNameMismatch,
+        hasKabKotaAutoFix,
+        hasJobFallback,
+        sheetRowNumber: response.sheetRowNumber,
       };
 
       saveProcessedSubmission(submission, validatedRows);
@@ -173,6 +182,10 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
             importMethod: "template",
             mappingScore: null,
             followedUpAt: null,
+            hasNameMismatch: false,
+            hasKabKotaAutoFix: false,
+            hasJobFallback: false,
+            sheetRowNumber: response.sheetRowNumber,
           },
           []
         );

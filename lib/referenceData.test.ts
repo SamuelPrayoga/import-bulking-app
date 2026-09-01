@@ -13,6 +13,11 @@ describe("findJobByName", () => {
     const job = findJobByName("⁠Pendamping PKH");
     expect(job?.jobId).toBe("1");
   });
+
+  it("resolves 'POLRI' (the institution's own name) to Bhabinkamtibmas (the actual position)", () => {
+    const job = findJobByName("POLRI");
+    expect(job?.jobName).toBe("Bhabinkamtibmas");
+  });
 });
 
 describe("findProvinceByName", () => {
@@ -47,10 +52,24 @@ describe("findCityByNameAndProvince", () => {
     expect(city?.cityName).toBe("GUNUNGKIDUL");
   });
 
-  it("does not strip 'Kota' outside DKI Jakarta, where Kota X and Kabupaten X can be different places", () => {
-    // Real template data uses "KOTA BANDA ACEH" as the actual city name for Aceh, not a prefix to
-    // strip — so this isn't testing a bug, just documenting the DKI-Jakarta-only scope.
+  it("does not strip an input-side 'Kota' prefix outside DKI Jakarta, where Kota X and Kabupaten X can be different places", () => {
+    // Real template data uses "KOTA BANDA ACEH" as the actual city name for Aceh, so this is a
+    // direct exact match, not the DKI-only prefix-stripping fallback.
     const city = findCityByNameAndProvince("Kota Banda Aceh", "Aceh");
     expect(city?.cityName).toBe("KOTA BANDA ACEH");
+  });
+
+  it("matches a 'Kota X' entry when the PIC wrote the bare name without 'Kota', when unambiguous", () => {
+    // Aceh has no separate "Sabang" kabupaten, so "SABANG" can only mean the city — this was
+    // previously rejected as "Kota/Kabupaten tidak sesuai dengan Provinsi" despite being correct.
+    const city = findCityByNameAndProvince("SABANG", "Aceh");
+    expect(city?.cityName).toBe("KOTA SABANG");
+  });
+
+  it("does not let a bare name accidentally resolve to the wrong 'Kota X' when a same-named kabupaten already exists", () => {
+    // Jawa Barat has both "KOTA BOGOR" and its own separate "BOGOR" kabupaten — the bare name must
+    // keep meaning the kabupaten (its own exact entry), not get overwritten by the city alias.
+    const city = findCityByNameAndProvince("Bogor", "Jawa Barat");
+    expect(city?.cityName).toBe("BOGOR");
   });
 });

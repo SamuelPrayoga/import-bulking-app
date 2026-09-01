@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   checkProvinceMismatch,
+  isJobFallbackWarning,
+  isKabKotaAutoFixWarning,
+  isNameMismatchWarning,
+  isNikRepeatWarning,
   isValidPicWhatsapp,
   normalizePicWhatsapp,
   validateSubmissionRows,
@@ -20,7 +24,7 @@ function row(overrides: Partial<RawAgentRow>): RawAgentRow {
   };
 }
 
-const noRegistryHit = () => null;
+const noHistory = () => null;
 
 describe("normalizePicWhatsapp / isValidPicWhatsapp", () => {
   it("normalizes 08xx to 62xx", () => {
@@ -35,6 +39,9 @@ describe("normalizePicWhatsapp / isValidPicWhatsapp", () => {
   it("strips spaces and dashes", () => {
     expect(normalizePicWhatsapp("0812-3456-7890")).toBe("6281234567890");
   });
+  it("strips other stray formatting characters too (parentheses, dots)", () => {
+    expect(normalizePicWhatsapp("(0812) 3456.7890")).toBe("6281234567890");
+  });
   it("rejects numbers with no recognizable prefix", () => {
     expect(normalizePicWhatsapp("1234567890")).toBeNull();
   });
@@ -43,6 +50,40 @@ describe("normalizePicWhatsapp / isValidPicWhatsapp", () => {
   });
   it("flags a well-formed number as valid", () => {
     expect(isValidPicWhatsapp("081234567890")).toBe(true);
+  });
+});
+
+describe("isNikRepeatWarning", () => {
+  it("matches both the same-name and different-name NIK-repeat warnings", () => {
+    expect(
+      isNikRepeatWarning('NIK sama pernah disubmit pada submission sebelumnya (PIC: Ani, 2026-08-01) — mohon diperhatikan, kemungkinan data duplikat')
+    ).toBe(true);
+    expect(
+      isNikRepeatWarning('NIK sama pernah disubmit dengan nama berbeda: "Budi" (submission 2026-08-01, PIC: Ani) — kemungkinan koreksi nama, mohon verifikasi manual')
+    ).toBe(true);
+  });
+
+  it("does not match an unrelated warning", () => {
+    expect(isNikRepeatWarning("NIK dibaca dari sel bertipe Angka dan berpotensi kehilangan presisi")).toBe(false);
+  });
+
+  it("isNameMismatchWarning is the narrower of the two — only the different-name case", () => {
+    const sameNameWarning = "NIK sama pernah disubmit pada submission sebelumnya (PIC: Ani, 2026-08-01) — mohon diperhatikan, kemungkinan data duplikat";
+    expect(isNikRepeatWarning(sameNameWarning)).toBe(true);
+    expect(isNameMismatchWarning(sameNameWarning)).toBe(false);
+  });
+});
+
+describe("isKabKotaAutoFixWarning / isJobFallbackWarning", () => {
+  it("each matches only its own warning, not the other's", () => {
+    const kabKotaWarning = 'Kota/Kabupaten "X" tidak sesuai dengan Provinsi "Y" — otomatis diganti ke "Z" (kab/kota yang didaftarkan PIC di Form), mohon verifikasi manual';
+    const jobWarning = 'JOB tidak dikenali: "X" — otomatis diganti ke "Lainnya", mohon verifikasi manual';
+
+    expect(isKabKotaAutoFixWarning(kabKotaWarning)).toBe(true);
+    expect(isJobFallbackWarning(kabKotaWarning)).toBe(false);
+
+    expect(isJobFallbackWarning(jobWarning)).toBe(true);
+    expect(isKabKotaAutoFixWarning(jobWarning)).toBe(false);
   });
 });
 
@@ -58,7 +99,9 @@ describe("checkProvinceMismatch", () => {
 describe("validateSubmissionRows", () => {
   const baseCtx = {
     fileProvinsi: "LAMPUNG",
-    nikExistsInRegistry: noRegistryHit,
+    declaredProvinsi: "LAMPUNG",
+    declaredKabKota: "MESUJI",
+    findNikHistory: noHistory,
   };
 
   it("marks a fully correct row as valid with recomputed codes", () => {
@@ -72,6 +115,18 @@ describe("validateSubmissionRows", () => {
 
   it("flags a NIK that isn't 16 digits", () => {
     const [result] = validateSubmissionRows([row({ nik: "12345" })], baseCtx);
+    expect(result.status).toBe("invalid");
+    expect(result.errors).toContain("NIK harus 16 digit angka");
+  });
+
+  it("cleans stray non-digit characters out of the NIK before validating it (spaces, dashes, a force-text apostrophe, ...)", () => {
+    const [result] = validateSubmissionRows([row({ nik: "1811-0101 0190'0001" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.nik).toBe("1811010101900001");
+  });
+
+  it("still rejects a NIK that's the wrong length even after cleaning non-digits out", () => {
+    const [result] = validateSubmissionRows([row({ nik: "1811-0101-9000-1" })], baseCtx);
     expect(result.status).toBe("invalid");
     expect(result.errors).toContain("NIK harus 16 digit angka");
   });
@@ -107,19 +162,37 @@ describe("validateSubmissionRows", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("flags a NIK that already exists in the cross-submission registry", () => {
+  it("does not block a NIK that already exists in an earlier submission under the same name, but still warns so the operator notices the repeat — a legitimate resubmission, not gated here since the destination CMS already handles it", () => {
     const ctx = {
       ...baseCtx,
-      nikExistsInRegistry: () => ({ picName: "Ani", timestamp: "2026-08-01" }),
+      findNikHistory: () => ({ nama: "BUDI SANTOSO", picName: "Ani", timestamp: "2026-08-01" }),
     };
     const [result] = validateSubmissionRows([row({})], ctx);
-    expect(result.status).toBe("invalid");
-    expect(result.errors.some((e) => e.includes("sudah terdaftar"))).toBe(true);
+    expect(result.status).toBe("valid");
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.some((w) => w.includes("NIK sama pernah disubmit pada submission sebelumnya"))).toBe(true);
+  });
+
+  it("warns (but does not invalidate) a NIK that exists in an earlier submission under a different name", () => {
+    const ctx = {
+      ...baseCtx,
+      findNikHistory: () => ({ nama: "BUDI SANTOSA", picName: "Ani", timestamp: "2026-08-01" }),
+    };
+    const [result] = validateSubmissionRows([row({})], ctx);
+    expect(result.status).toBe("valid");
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.some((w) => w.includes("nama berbeda"))).toBe(true);
   });
 
   it("does not validate the agent's own No WA format", () => {
     const [result] = validateSubmissionRows([row({ noWa: "not-a-phone-number" })], baseCtx);
     expect(result.status).toBe("valid");
+  });
+
+  it("cleans stray non-digit characters out of the agent's No WA", () => {
+    const [result] = validateSubmissionRows([row({ noWa: "(0812) 3456-7890" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.noWa).toBe("081234567890");
   });
 
   it("treats a blank No WA as optional, not a validation error", () => {
@@ -128,14 +201,47 @@ describe("validateSubmissionRows", () => {
     expect(result.errors).toEqual([]);
   });
 
-  it("flags an unrecognized JOB", () => {
-    const [result] = validateSubmissionRows([row({ job: "Tukang Sayur" })], baseCtx);
-    expect(result.status).toBe("invalid");
-    expect(result.errors.some((e) => e.includes("JOB tidak dikenali"))).toBe(true);
+  it("auto-corrects an unrecognized JOB to 'Lainnya' with a warning, instead of blocking the row", () => {
+    // Real case: a village/area name ("GP. GEUCEU KOMPLEK") typed into the JOB column by mistake.
+    const [result] = validateSubmissionRows([row({ job: "GP. GEUCEU KOMPLEK" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.errors).toEqual([]);
+    expect(result.job).toBe("Lainnya");
+    expect(result.jobId).toBe("10");
+    expect(result.warnings.some((w) => w.includes('JOB tidak dikenali: "GP. GEUCEU KOMPLEK"'))).toBe(true);
   });
 
-  it("flags a Kota Kabupaten that doesn't belong to the file's Provinsi", () => {
+  it("auto-corrects a blank JOB to 'Lainnya' with a warning too, instead of blocking the row", () => {
+    const [result] = validateSubmissionRows([row({ job: "" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.errors).toEqual([]);
+    expect(result.job).toBe("Lainnya");
+    expect(result.jobId).toBe("10");
+    expect(result.warnings.some((w) => w.includes("JOB tidak dikenali: (kosong)"))).toBe(true);
+  });
+
+  it("normalizes JOB to Master Data's canonical spelling once resolved, including via an alias (e.g. 'POLRI' -> the actual position 'Bhabinkamtibmas')", () => {
+    const [result] = validateSubmissionRows([row({ job: "POLRI" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.job).toBe("Bhabinkamtibmas");
+    expect(result.jobId).toBe("12");
+  });
+
+  it("auto-corrects a Kota Kabupaten that doesn't belong to the file's Provinsi to the PIC's own declared kab/kota, with a warning instead of blocking the row", () => {
+    // "BOGOR" (Jawa Barat) can't belong to a LAMPUNG file — almost always a stray/copy-pasted
+    // value rather than a deliberate agent location, since a real different-but-valid Lampung
+    // kab/kota already passes without this fallback (see the MESUJI-vs-declared test above).
     const [result] = validateSubmissionRows([row({ kotaKabupaten: "BOGOR" })], baseCtx);
+    expect(result.status).toBe("valid");
+    expect(result.errors).toEqual([]);
+    expect(result.kotaKabupaten).toBe("MESUJI"); // baseCtx.declaredKabKota
+    expect(result.kodeKota).toBe("1811");
+    expect(result.warnings.some((w) => w.includes('otomatis diganti ke "MESUJI"'))).toBe(true);
+  });
+
+  it("still blocks the row as invalid when even the PIC's own declared kab/kota can't be resolved", () => {
+    const ctx = { ...baseCtx, declaredKabKota: "TEMPAT TIDAK ADA" };
+    const [result] = validateSubmissionRows([row({ kotaKabupaten: "BOGOR" })], ctx);
     expect(result.status).toBe("invalid");
     expect(result.errors.some((e) => e.includes("tidak sesuai dengan Provinsi"))).toBe(true);
   });

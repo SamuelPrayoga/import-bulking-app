@@ -193,6 +193,31 @@ describe("trySmartMap", () => {
     expect(result!.rows.every((r) => /^\d{16}$/.test(r.nik))).toBe(true);
   });
 
+  it("does not count a drag-autofilled row (JOB/Kota filled, but no Nama and no NIK at all) as real data", () => {
+    // Real case: a PIC filled in one genuine agent, then the JOB/Kota Kabupaten columns stayed
+    // filled for 14 more drag-autofilled rows where Nama and NIK were never actually typed in.
+    // Counting those 14 as rows tanked nikScore (1/15 had a real NIK) and sank an otherwise-clean
+    // file's score below the auto-accept threshold.
+    const buffer = buildBuffer([
+      {
+        name: "Sheet1",
+        rows: [
+          ["No", "Nama", "NIK", "No WA", "JOB", "Kota Kabupaten"],
+          ["1", "M HANIFAH BATU BARA", "1175010712900002", "6282298846674", "POLRI", "ACEH SINGKIL"],
+          ["2", "", "", "", "POLRI", "ACEH SINGKIL"],
+          ["3", "", "", "", "POLRI", "ACEH SINGKIL"],
+          ["4", "", "", "", "POLRI", "ACEH SINGKIL"],
+        ],
+      },
+    ]);
+
+    const result = trySmartMap(buffer);
+    expect(result).not.toBeNull();
+    expect(result!.rows).toHaveLength(1);
+    expect(result!.rows[0].nama).toBe("M HANIFAH BATU BARA");
+    expect(result!.score).toBeGreaterThanOrEqual(SMART_MAP_AUTO_ACCEPT_SCORE);
+  });
+
   it("defaults unrecognized JOB titles to Bhabinkamtibmas once the sheet is confirmed a Polri roster", () => {
     const buffer = buildBuffer([
       {

@@ -41,6 +41,9 @@ export function PullResponsesButton() {
         <a className="btn secondary" href="/api/clean-export">
           <Sparkles size={14} /> Download Data Bersih (Gabungan)
         </a>
+        <a className="btn secondary" href="/api/clean-export?pending=1">
+          <Sparkles size={14} /> Download Data Bersih (Sheet Pending)
+        </a>
       </div>
 
       {error && (

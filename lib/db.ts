@@ -2,8 +2,9 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ReportRow, SubmissionRecord, ValidatedRow } from "../types/index";
-import type { NikRegistryHit } from "./validate";
+import type { NikHistoryHit, NikRegistryHit } from "./validate";
 import { parseFormTimestamp } from "./formTimestamp";
+import { isSheetStatusDone } from "./sheetStatus";
 
 const NIK_RE = /^\d{16}$/;
 
@@ -67,6 +68,7 @@ function initSchema(database: Database.Database): void {
       errors TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_submission_rows_submission_id ON submission_rows(submission_id);
+    CREATE INDEX IF NOT EXISTS idx_submission_rows_nik ON submission_rows(nik);
 
     CREATE TABLE IF NOT EXISTS nik_registry (
       nik TEXT PRIMARY KEY,
@@ -103,6 +105,18 @@ function initSchema(database: Database.Database): void {
   if (!submissionColumns.some((c) => c.name === "followed_up_at")) {
     database.exec("ALTER TABLE submissions ADD COLUMN followed_up_at TEXT");
   }
+  if (!submissionColumns.some((c) => c.name === "has_name_mismatch")) {
+    database.exec("ALTER TABLE submissions ADD COLUMN has_name_mismatch INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!submissionColumns.some((c) => c.name === "has_kabkota_autofix")) {
+    database.exec("ALTER TABLE submissions ADD COLUMN has_kabkota_autofix INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!submissionColumns.some((c) => c.name === "has_job_fallback")) {
+    database.exec("ALTER TABLE submissions ADD COLUMN has_job_fallback INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!submissionColumns.some((c) => c.name === "sheet_row_number")) {
+    database.exec("ALTER TABLE submissions ADD COLUMN sheet_row_number INTEGER");
+  }
 }
 
 export function submissionExists(id: string): boolean {
@@ -117,6 +131,37 @@ export function findNikInRegistry(nik: string): NikRegistryHit | null {
   return row ?? null;
 }
 
+/**
+ * Finds the most recent submission's row for this NIK, including the agent name recorded there.
+ * Pass `beforeProcessedAt` (a submission's own processedAt) when re-validating historical data in
+ * chronological order, so a submission never sees NIKs from submissions processed after it.
+ */
+export function findNikHistory(nik: string, beforeProcessedAt?: string): NikHistoryHit | null {
+  const database = getDb();
+  const row = beforeProcessedAt
+    ? database
+        .prepare(
+          `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
+           FROM submission_rows r
+           JOIN submissions s ON s.id = r.submission_id
+           WHERE r.nik = ? AND s.processed_at < ?
+           ORDER BY s.processed_at DESC
+           LIMIT 1`
+        )
+        .get(nik, beforeProcessedAt)
+    : database
+        .prepare(
+          `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
+           FROM submission_rows r
+           JOIN submissions s ON s.id = r.submission_id
+           WHERE r.nik = ?
+           ORDER BY s.processed_at DESC
+           LIMIT 1`
+        )
+        .get(nik);
+  return (row as NikHistoryHit | undefined) ?? null;
+}
+
 /** Persists one fully-validated submission (header + all rows) and registers its valid-format NIKs, atomically. */
 export function saveProcessedSubmission(submission: SubmissionRecord, rows: ValidatedRow[]): void {
   const database = getDb();
@@ -126,12 +171,12 @@ export function saveProcessedSubmission(submission: SubmissionRecord, rows: Vali
       id, timestamp, email, pic_name, pic_whatsapp, pic_whatsapp_valid,
       declared_provinsi, declared_kabkota, instansi, drive_file_id, file_provinsi,
       sheet_status, location_mismatch, valid_count, invalid_count, status, processed_at, error_message,
-      import_method, mapping_score
+      import_method, mapping_score, has_name_mismatch, has_kabkota_autofix, sheet_row_number, has_job_fallback
     ) VALUES (
       @id, @timestamp, @email, @picName, @picWhatsapp, @picWhatsappValid,
       @declaredProvinsi, @declaredKabKota, @instansi, @driveFileId, @fileProvinsi,
       @sheetStatus, @locationMismatch, @validCount, @invalidCount, @status, @processedAt, @errorMessage,
-      @importMethod, @mappingScore
+      @importMethod, @mappingScore, @hasNameMismatch, @hasKabKotaAutoFix, @sheetRowNumber, @hasJobFallback
     )
   `);
 
@@ -155,6 +200,9 @@ export function saveProcessedSubmission(submission: SubmissionRecord, rows: Vali
       ...submission,
       picWhatsappValid: submission.picWhatsappValid ? 1 : 0,
       locationMismatch: submission.locationMismatch ? 1 : 0,
+      hasNameMismatch: submission.hasNameMismatch ? 1 : 0,
+      hasKabKotaAutoFix: submission.hasKabKotaAutoFix ? 1 : 0,
+      hasJobFallback: submission.hasJobFallback ? 1 : 0,
     });
 
     for (const r of rows) {
@@ -202,7 +250,8 @@ export function listSubmissions(): SubmissionRecord[] {
         file_provinsi as fileProvinsi, sheet_status as sheetStatus, location_mismatch as locationMismatch,
         valid_count as validCount, invalid_count as invalidCount, status, processed_at as processedAt,
         error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore,
-        followed_up_at as followedUpAt
+        followed_up_at as followedUpAt, has_name_mismatch as hasNameMismatch, has_kabkota_autofix as hasKabKotaAutoFix,
+        sheet_row_number as sheetRowNumber, has_job_fallback as hasJobFallback
       FROM submissions`
     )
     .all() as Array<Record<string, unknown>>;
@@ -211,11 +260,26 @@ export function listSubmissions(): SubmissionRecord[] {
     ...r,
     picWhatsappValid: Boolean(r.picWhatsappValid),
     locationMismatch: Boolean(r.locationMismatch),
+    hasNameMismatch: Boolean(r.hasNameMismatch),
+    hasKabKotaAutoFix: Boolean(r.hasKabKotaAutoFix),
+    hasJobFallback: Boolean(r.hasJobFallback),
   })) as SubmissionRecord[];
 
   // The Form's "DD/MM/YYYY H:MM:SS" timestamp doesn't sort correctly as a plain string (e.g. "9:.."
   // vs "11:.." or single- vs double-digit days), so it must be parsed before sorting newest-first.
   return submissions.sort((a, b) => parseFormTimestamp(b.timestamp) - parseFormTimestamp(a.timestamp));
+}
+
+/**
+ * Finds every submission from one PIC's email, for the public self-service status lookup (no
+ * login) — gated by a captcha (see lib/captcha.ts) plus the same per-IP lockout the login page
+ * uses (see lib/auth.ts), rather than a second identity field, per explicit product decision.
+ */
+export function findSubmissionsByEmail(email: string): SubmissionRecord[] {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return [];
+
+  return listSubmissions().filter((s) => s.email.trim().toLowerCase() === normalizedEmail);
 }
 
 export function getSubmission(submissionId: string): SubmissionRecord | null {
@@ -228,12 +292,20 @@ export function getSubmission(submissionId: string): SubmissionRecord | null {
         file_provinsi as fileProvinsi, sheet_status as sheetStatus, location_mismatch as locationMismatch,
         valid_count as validCount, invalid_count as invalidCount, status, processed_at as processedAt,
         error_message as errorMessage, import_method as importMethod, mapping_score as mappingScore,
-        followed_up_at as followedUpAt
+        followed_up_at as followedUpAt, has_name_mismatch as hasNameMismatch, has_kabkota_autofix as hasKabKotaAutoFix,
+        sheet_row_number as sheetRowNumber, has_job_fallback as hasJobFallback
       FROM submissions WHERE id = ?`
     )
     .get(submissionId) as Record<string, unknown> | undefined;
   if (!r) return null;
-  return { ...r, picWhatsappValid: Boolean(r.picWhatsappValid), locationMismatch: Boolean(r.locationMismatch) } as SubmissionRecord;
+  return {
+    ...r,
+    picWhatsappValid: Boolean(r.picWhatsappValid),
+    locationMismatch: Boolean(r.locationMismatch),
+    hasNameMismatch: Boolean(r.hasNameMismatch),
+    hasKabKotaAutoFix: Boolean(r.hasKabKotaAutoFix),
+    hasJobFallback: Boolean(r.hasJobFallback),
+  } as SubmissionRecord;
 }
 
 /** Raw (unvalidated) row fields plus the internal row id, for re-running validation against already-stored data. */
@@ -271,16 +343,19 @@ export function getRawSubmissionRows(submissionId: string): Array<{
 /** Overwrites one row's computed validation fields in place (used by the revalidation backfill). */
 export function updateRowValidation(
   dbId: number,
-  patch: Pick<ValidatedRow, "nama" | "kotaKabupaten" | "status" | "errors" | "warnings" | "kodeProv" | "kodeKota" | "jobId">
+  patch: Pick<ValidatedRow, "nama" | "nik" | "noWa" | "job" | "kotaKabupaten" | "status" | "errors" | "warnings" | "kodeProv" | "kodeKota" | "jobId">
 ): void {
   getDb()
     .prepare(
-      `UPDATE submission_rows SET nama = @nama, kota_kabupaten = @kotaKabupaten, status = @status,
+      `UPDATE submission_rows SET nama = @nama, nik = @nik, no_wa = @noWa, job = @job, kota_kabupaten = @kotaKabupaten, status = @status,
         errors = @errors, warnings = @warnings, kode_prov = @kodeProv, kode_kota = @kodeKota, job_id = @jobId WHERE id = @dbId`
     )
     .run({
       dbId,
       nama: patch.nama,
+      nik: patch.nik,
+      noWa: patch.noWa,
+      job: patch.job,
       kotaKabupaten: patch.kotaKabupaten,
       status: patch.status,
       errors: JSON.stringify(patch.errors),
@@ -291,18 +366,44 @@ export function updateRowValidation(
     });
 }
 
-/** Updates a submission's cached valid/invalid row counts (used by the revalidation backfill). */
-export function updateSubmissionCounts(submissionId: string, validCount: number, invalidCount: number): void {
+/** Updates a submission's cached valid/invalid row counts and name-mismatch flag (used by the revalidation backfill). */
+export function updateSubmissionCounts(
+  submissionId: string,
+  validCount: number,
+  invalidCount: number,
+  hasNameMismatch: boolean,
+  hasKabKotaAutoFix: boolean,
+  hasJobFallback: boolean
+): void {
+  // has_kabkota_autofix and has_job_fallback are sticky (OR'd with their current value, never
+  // reset to 0 here): both fixes overwrite the row in place (kota_kabupaten / job), so once fixed,
+  // a *later* revalidation pass finds nothing left to flag — a plain overwrite would silently drop
+  // the audit trail for exactly the rows these flags exist to surface. has_name_mismatch doesn't
+  // have this problem (its NIK history comparison is unaffected by anything this function
+  // changes), so it stays a live value.
   getDb()
-    .prepare("UPDATE submissions SET valid_count = @validCount, invalid_count = @invalidCount WHERE id = @submissionId")
-    .run({ submissionId, validCount, invalidCount });
+    .prepare(
+      `UPDATE submissions SET valid_count = @validCount, invalid_count = @invalidCount,
+        has_name_mismatch = @hasNameMismatch,
+        has_kabkota_autofix = has_kabkota_autofix OR @hasKabKotaAutoFix,
+        has_job_fallback = has_job_fallback OR @hasJobFallback
+        WHERE id = @submissionId`
+    )
+    .run({
+      submissionId,
+      validCount,
+      invalidCount,
+      hasNameMismatch: hasNameMismatch ? 1 : 0,
+      hasKabKotaAutoFix: hasKabKotaAutoFix ? 1 : 0,
+      hasJobFallback: hasJobFallback ? 1 : 0,
+    });
 }
 
 /** Updates just the sheet_status field, e.g. once a submission that predates this column is re-synced. Backfill-only. */
-export function updateSheetStatus(submissionId: string, sheetStatus: string): void {
+export function updateSheetStatus(submissionId: string, sheetStatus: string, sheetRowNumber: number): void {
   getDb()
-    .prepare("UPDATE submissions SET sheet_status = @sheetStatus WHERE id = @submissionId")
-    .run({ submissionId, sheetStatus });
+    .prepare("UPDATE submissions SET sheet_status = @sheetStatus, sheet_row_number = @sheetRowNumber WHERE id = @submissionId")
+    .run({ submissionId, sheetStatus, sheetRowNumber });
 }
 
 /** Marks (or unmarks) a submission as followed up with the PIC — an operator-driven workflow flag, independent of the row-level Valid/Invalid status. */
@@ -372,8 +473,12 @@ export function getSubmissionRows(submissionId: string): ValidatedRow[] {
   })) as ValidatedRow[];
 }
 
-/** Rows joined with their parent submission's metadata, for building the consolidated report. */
-export function getReportRows(submissionId?: string): ReportRow[] {
+/**
+ * Rows joined with their parent submission's metadata, for building the consolidated report.
+ * `pendingOnly` restricts to submissions whose sheet Status column (K) isn't "Done" yet — see
+ * lib/sheetStatus.ts, the single source of truth for what counts as "pending".
+ */
+export function getReportRows(submissionId?: string, options?: { pendingOnly?: boolean }): ReportRow[] {
   const query = `
     SELECT
       sr.row_number as rowNumber, sr.no, sr.nama, sr.nik, sr.no_wa as noWa, sr.job,
@@ -382,7 +487,7 @@ export function getReportRows(submissionId?: string): ReportRow[] {
       s.id as submissionId, s.file_provinsi as fileProvinsi, s.pic_name as picName,
       s.instansi, s.pic_whatsapp as picWhatsapp, s.timestamp,
       s.location_mismatch as locationMismatch, s.declared_provinsi as declaredProvinsi,
-      s.declared_kabkota as declaredKabKota
+      s.declared_kabkota as declaredKabKota, s.sheet_status as sheetStatus
     FROM submission_rows sr
     JOIN submissions s ON s.id = sr.submission_id
     ${submissionId ? "WHERE s.id = @submissionId" : ""}
@@ -392,12 +497,14 @@ export function getReportRows(submissionId?: string): ReportRow[] {
     .prepare(query)
     .all(submissionId ? { submissionId } : {}) as Array<Record<string, unknown>>;
 
-  return rows.map((r) => ({
+  const reportRows = rows.map((r) => ({
     ...r,
     locationMismatch: Boolean(r.locationMismatch),
     errors: JSON.parse(r.errors as string),
     warnings: JSON.parse(r.warnings as string),
   })) as unknown as ReportRow[];
+
+  return options?.pendingOnly ? reportRows.filter((r) => !isSheetStatusDone(r.sheetStatus)) : reportRows;
 }
 
 export interface NikSearchHit {

@@ -73,6 +73,8 @@ export interface FormResponseRecord {
   instansi: string;
   /** Raw value of the response sheet's "Status" column (K) — set by a separate process outside this app. */
   sheetStatus: string;
+  /** This response's literal row number in the sheet (header = row 1), so column K can be targeted for a write. */
+  sheetRowNumber: number;
 }
 
 export interface ReportRow extends ValidatedRow {
@@ -85,6 +87,7 @@ export interface ReportRow extends ValidatedRow {
   locationMismatch: boolean;
   declaredProvinsi: string;
   declaredKabKota: string;
+  sheetStatus: string;
 }
 
 export interface SubmissionRecord {
@@ -107,10 +110,18 @@ export interface SubmissionRecord {
   errorMessage: string | null;
   /** Raw value of the response sheet's "Status" column (K) — set by a separate process outside this app. */
   sheetStatus: string;
+  /** This submission's literal row number in the response sheet (header = row 1) — null for submissions saved before this was tracked, until backfilled. Needed to write column K for this specific row. */
+  sheetRowNumber: number | null;
   /** How the rows were extracted: from the official "Form" sheet, or guessed via lib/smartMapping.ts. */
   importMethod: "template" | "smart-mapped";
   /** Confidence score (0-100) from lib/smartMapping.ts, only set when importMethod is "smart-mapped". */
   mappingScore: number | null;
   /** When the operator marked this submission as followed up with the PIC (e.g. via WA) — null if not yet. */
   followedUpAt: string | null;
+  /** True when at least one row's NIK also appears in an earlier submission under a different name. */
+  hasNameMismatch: boolean;
+  /** True when at least one row's Kota/Kabupaten was auto-corrected to the PIC's declared kab/kota because it didn't belong to the file's province at all. */
+  hasKabKotaAutoFix: boolean;
+  /** True when at least one row's JOB didn't match any reference category and was auto-corrected to "Lainnya". */
+  hasJobFallback: boolean;
 }

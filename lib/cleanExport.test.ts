@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
-import { buildCleanConsolidatedFile, buildCleanSubmissionFile } from "./cleanExport";
+import { buildCleanConsolidatedFile, buildCleanSubmissionFile, dedupeByNik } from "./cleanExport";
 import { reportToBuffer } from "./report";
 import type { ReportRow } from "../types/index";
 
@@ -28,6 +28,7 @@ function reportRow(overrides: Partial<ReportRow>): ReportRow {
     locationMismatch: false,
     declaredProvinsi: "LAMPUNG",
     declaredKabKota: "MESUJI",
+    sheetStatus: "",
     ...overrides,
   };
 }
@@ -73,6 +74,37 @@ describe("buildCleanSubmissionFile", () => {
     const reloaded = new ExcelJS.Workbook();
     await reloaded.xlsx.load(buffer as any);
     expect(reloaded.getWorksheet("Form")).toBeDefined();
+  });
+});
+
+describe("dedupeByNik", () => {
+  it("keeps only the most recent row (by Form timestamp) when the same NIK appears more than once", () => {
+    const rows = [
+      reportRow({ submissionId: "sub-1", picName: "Ani", timestamp: "29/08/2026 10:00:00", job: "Pendamping PKH" }),
+      reportRow({ submissionId: "sub-2", picName: "Beni", timestamp: "31/08/2026 08:00:00", job: "Bhabinkamtibmas" }),
+    ];
+    const result = dedupeByNik(rows);
+    expect(result).toHaveLength(1);
+    expect(result[0].picName).toBe("Beni");
+    expect(result[0].job).toBe("Bhabinkamtibmas");
+  });
+
+  it("keeps the later row correctly even when it appears first in the input array", () => {
+    const rows = [
+      reportRow({ submissionId: "sub-2", picName: "Beni", timestamp: "31/08/2026 08:00:00" }),
+      reportRow({ submissionId: "sub-1", picName: "Ani", timestamp: "29/08/2026 10:00:00" }),
+    ];
+    const result = dedupeByNik(rows);
+    expect(result).toHaveLength(1);
+    expect(result[0].picName).toBe("Beni");
+  });
+
+  it("leaves rows with distinct NIKs untouched", () => {
+    const rows = [
+      reportRow({ nik: "1811010101900001" }),
+      reportRow({ nik: "1811010101900002", rowNumber: 8 }),
+    ];
+    expect(dedupeByNik(rows)).toHaveLength(2);
   });
 });
 
