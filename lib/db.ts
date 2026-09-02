@@ -10,14 +10,23 @@ const NIK_RE = /^\d{16}$/;
 
 let schemaReady: Promise<void> | null = null;
 
-function buildClientConfig(): { url: string; authToken?: string } {
+// @libsql/client's HTTP transport calls the ambient global `fetch` under the hood, which in a
+// Next.js Server Component is Next's own patched fetch with automatic request memoization/caching
+// — the SECOND distinct call within one render was observed silently returning an empty/stale
+// result instead of a fresh network response. Passing an explicit `cache: "no-store"` fetch
+// override forces every libSQL request to opt out of that, regardless of route-level defaults.
+function noStoreFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): ReturnType<typeof fetch> {
+  return fetch(input, { ...init, cache: "no-store" });
+}
+
+function buildClientConfig(): { url: string; authToken?: string; fetch: typeof noStoreFetch } {
   const tursoUrl = process.env.TURSO_DATABASE_URL;
   if (tursoUrl) {
-    return { url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN };
+    return { url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN, fetch: noStoreFetch };
   }
   const dbPath = process.env.APP_DB_PATH || path.join(process.cwd(), "data", "app.db");
   mkdirSync(path.dirname(dbPath), { recursive: true });
-  return { url: `file:${dbPath}` };
+  return { url: `file:${dbPath}`, fetch: noStoreFetch };
 }
 
 /**
