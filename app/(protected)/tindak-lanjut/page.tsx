@@ -4,8 +4,8 @@ import { getPendingFollowUps } from "../../../lib/db";
 
 export const dynamic = "force-dynamic";
 
-export default function FollowUpQueuePage() {
-  const pending = getPendingFollowUps();
+export default async function FollowUpQueuePage() {
+  const pending = await getPendingFollowUps();
 
   return (
     <>

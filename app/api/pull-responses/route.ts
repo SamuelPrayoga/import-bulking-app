@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
   const ip = request.headers.get("x-forwarded-for") ?? "local";
   try {
     const result = await pullNewResponses();
-    recordAuditEvent(
+    await recordAuditEvent(
       "pull_responses",
       process.env.ADMIN_EMAIL ?? "-",
       ip,
@@ -15,13 +15,13 @@ export async function POST(request: NextRequest) {
     );
     // Only worth snapshotting when something actually changed.
     if (result.newlyProcessed > 0) {
-      const backupPath = await createBackup();
-      recordAuditEvent("backup_created", process.env.ADMIN_EMAIL ?? "-", ip, backupPath.split("/").pop() ?? backupPath);
+      const backupName = await createBackup();
+      await recordAuditEvent("backup_created", process.env.ADMIN_EMAIL ?? "-", ip, backupName);
     }
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    recordAuditEvent("pull_responses", process.env.ADMIN_EMAIL ?? "-", ip, `Gagal: ${message}`);
+    await recordAuditEvent("pull_responses", process.env.ADMIN_EMAIL ?? "-", ip, `Gagal: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

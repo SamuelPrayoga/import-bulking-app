@@ -1,0 +1,23 @@
+name: Auto-pull Google Sheet responses
+
+on:
+  schedule:
+    # Every hour, matching the app's old AUTO_PULL_INTERVAL_MINUTES=60 default. GitHub's scheduler
+    # is best-effort (can run a few minutes late), which is fine for this use case.
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/auto-pull
+        run: |
+          status=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/auto-pull")
+          echo "HTTP status: $status"
+          cat /tmp/response.txt
+          if [ "$status" -ge 300 ]; then
+            exit 1
+          fi

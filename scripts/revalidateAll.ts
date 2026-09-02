@@ -18,8 +18,8 @@ import type { RawAgentRow } from "../types/index";
 const NIK_RE = /^\d{16}$/;
 
 async function main() {
-  clearNikRegistry();
-  const submissions = listSubmissionsChronological();
+  await clearNikRegistry();
+  const submissions = await listSubmissionsChronological();
 
   let totalRows = 0;
   let totalValid = 0;
@@ -27,7 +27,7 @@ async function main() {
   for (const submission of submissions) {
     if (submission.status !== "processed") continue;
 
-    const rawRows = getRawSubmissionRows(submission.id);
+    const rawRows = await getRawSubmissionRows(submission.id);
     // Backfill a blank Kota/Kabupaten from the PIC's own declared location — never override one
     // that's actually present in the row, since one PIC can legitimately manage agents across
     // several kab/kota.
@@ -46,10 +46,10 @@ async function main() {
     // uploaded file is a gap to fill from the PIC's own declared Provinsi, not left blank.
     const fileProvinsi = submission.fileProvinsi || submission.declaredProvinsi;
     if (fileProvinsi !== submission.fileProvinsi) {
-      updateSubmissionFileProvinsi(submission.id, fileProvinsi);
+      await updateSubmissionFileProvinsi(submission.id, fileProvinsi);
     }
 
-    const validated = validateSubmissionRows(agentRows, {
+    const validated = await validateSubmissionRows(agentRows, {
       fileProvinsi,
       declaredProvinsi: submission.declaredProvinsi,
       declaredKabKota: submission.declaredKabKota,
@@ -60,9 +60,10 @@ async function main() {
     let hasNameMismatch = false;
     let hasKabKotaAutoFix = false;
     let hasJobFallback = false;
-    validated.forEach((v, i) => {
+    for (let i = 0; i < validated.length; i++) {
+      const v = validated[i];
       const dbId = rawRows[i].dbId;
-      updateRowValidation(dbId, {
+      await updateRowValidation(dbId, {
         nama: v.nama,
         nik: v.nik,
         noWa: v.noWa,
@@ -80,11 +81,11 @@ async function main() {
       if (v.warnings.some(isKabKotaAutoFixWarning)) hasKabKotaAutoFix = true;
       if (v.warnings.some(isJobFallbackWarning)) hasJobFallback = true;
       if (NIK_RE.test(v.nik)) {
-        registerNikForBackfill(v.nik, submission.id, dbId, submission.picName, submission.timestamp);
+        await registerNikForBackfill(v.nik, submission.id, dbId, submission.picName, submission.timestamp);
       }
-    });
+    }
 
-    updateSubmissionCounts(submission.id, validCount, validated.length - validCount, hasNameMismatch, hasKabKotaAutoFix, hasJobFallback);
+    await updateSubmissionCounts(submission.id, validCount, validated.length - validCount, hasNameMismatch, hasKabKotaAutoFix, hasJobFallback);
     totalRows += validated.length;
     totalValid += validCount;
   }

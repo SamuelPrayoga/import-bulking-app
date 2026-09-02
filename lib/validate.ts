@@ -85,7 +85,7 @@ export interface SubmissionValidationContext {
   declaredProvinsi: string;
   declaredKabKota: string;
   /** Look up the most recent earlier submission (if any) that used this NIK, including the name recorded there. */
-  findNikHistory: (nik: string) => NikHistoryHit | null;
+  findNikHistory: (nik: string) => NikHistoryHit | null | Promise<NikHistoryHit | null>;
 }
 
 /**
@@ -94,10 +94,10 @@ export interface SubmissionValidationContext {
  * duplicated NIK are flagged (matching the template's own instruction that duplicated NIK rows
  * are not accepted at all) rather than just the second-and-later occurrences.
  */
-export function validateSubmissionRows(
+export async function validateSubmissionRows(
   rows: RawAgentRow[],
   ctx: SubmissionValidationContext
-): ValidatedRow[] {
+): Promise<ValidatedRow[]> {
   const nikCounts = new Map<string, number>();
   for (const row of rows) {
     const nik = keepDigitsOnly(row.nik);
@@ -106,14 +106,14 @@ export function validateSubmissionRows(
     }
   }
 
-  return rows.map((row) => validateRow(row, ctx, nikCounts));
+  return Promise.all(rows.map((row) => validateRow(row, ctx, nikCounts)));
 }
 
-function validateRow(
+async function validateRow(
   row: RawAgentRow,
   ctx: SubmissionValidationContext,
   nikCounts: Map<string, number>
-): ValidatedRow {
+): Promise<ValidatedRow> {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -144,7 +144,7 @@ function validateRow(
       // so this app doesn't need to duplicate that gate. Still surfaced as a warning either way —
       // same name or not — purely so the operator notices at a glance (e.g. a red row highlight),
       // since a repeat is always worth a second look even when it's an entirely legitimate resubmission.
-      const history = ctx.findNikHistory(nik);
+      const history = await ctx.findNikHistory(nik);
       if (history) {
         if (history.nama.trim().toUpperCase() === nama) {
           warnings.push(

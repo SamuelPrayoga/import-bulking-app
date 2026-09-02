@@ -21,10 +21,10 @@ export default async function DashboardPage({
   const params = await searchParams;
   const nikQuery = typeof params.nik === "string" ? params.nik.trim() : "";
 
-  const errorFrequency = getErrorFrequency();
-  const provinceBreakdown = getProvinceBreakdown();
-  const trend = getValidityTrend();
-  const nikHits = nikQuery ? searchByNik(nikQuery) : [];
+  const errorFrequency = await getErrorFrequency();
+  const provinceBreakdown = await getProvinceBreakdown();
+  const trend = await getValidityTrend();
+  const nikHits = nikQuery ? await searchByNik(nikQuery) : [];
 
   const maxErrorCount = Math.max(1, ...errorFrequency.map((e) => e.count));
   const maxProvinceSubmissions = Math.max(1, ...provinceBreakdown.map((p) => p.submissionCount));

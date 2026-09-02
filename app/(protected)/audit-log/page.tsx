@@ -49,7 +49,7 @@ export default async function AuditLogPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { page: pageParam } = await searchParams;
-  const entries = listAuditLog();
+  const entries = await listAuditLog();
 
   const page = Math.max(1, Number(pageParam ?? "1") || 1);
   const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));

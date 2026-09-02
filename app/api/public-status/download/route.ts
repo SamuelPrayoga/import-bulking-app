@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   const submissionId = request.nextUrl.searchParams.get("submissionId") ?? "";
   const email = request.nextUrl.searchParams.get("email") ?? "";
 
-  const submission = submissionId ? getSubmission(submissionId) : null;
+  const submission = submissionId ? await getSubmission(submissionId) : null;
   const ownsIt = submission && submission.email.trim().toLowerCase() === email.trim().toLowerCase();
 
   if (!ownsIt) {
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   }
   clearFailedAttempts(rateLimitKey);
 
-  const rows = getReportRows(submission.id);
+  const rows = await getReportRows(submission.id);
   const workbook = buildCleanSubmissionFile(submission.fileProvinsi ?? "", rows);
   const buffer = await reportToBuffer(workbook);
 

@@ -14,8 +14,8 @@ export interface PublicSubmissionStatus {
 }
 
 /** Shapes a submission for the public dashboard — shared between the email+captcha lookup and the WA magic-link lookup so both report the exact same fields, with no row-level agent name/NIK. */
-export function toPublicSubmissionStatus(s: SubmissionRecord): PublicSubmissionStatus {
-  const rows = s.status === "processed" ? getSubmissionRows(s.id) : [];
+export async function toPublicSubmissionStatus(s: SubmissionRecord): Promise<PublicSubmissionStatus> {
+  const rows = s.status === "processed" ? await getSubmissionRows(s.id) : [];
   return {
     submissionId: s.id,
     timestamp: s.timestamp,

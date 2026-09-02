@@ -65,15 +65,15 @@ beforeAll(async () => {
   }
 
   // Two submissions from LAMPUNG (2 valid, 1 invalid with 2 error types), one from ACEH (1 valid).
-  dbModule.saveProcessedSubmission(submission({ id: "s1", declaredProvinsi: "LAMPUNG", timestamp: "01/08/2026 10:00:00", validCount: 1, invalidCount: 1 }), [
+  await dbModule.saveProcessedSubmission(submission({ id: "s1", declaredProvinsi: "LAMPUNG", timestamp: "01/08/2026 10:00:00", validCount: 1, invalidCount: 1 }), [
     row({ rowNumber: 7, status: "valid" }),
     row({ rowNumber: 8, status: "invalid", nama: "", nik: "", errors: ["Nama kosong", "NIK kosong"] }),
   ]);
-  dbModule.saveProcessedSubmission(submission({ id: "s2", declaredProvinsi: "LAMPUNG", timestamp: "02/08/2026 09:00:00", validCount: 1, invalidCount: 1 }), [
+  await dbModule.saveProcessedSubmission(submission({ id: "s2", declaredProvinsi: "LAMPUNG", timestamp: "02/08/2026 09:00:00", validCount: 1, invalidCount: 1 }), [
     row({ rowNumber: 7, status: "valid", nik: "1811010101900002" }),
     row({ rowNumber: 8, status: "invalid", nik: "12345", errors: ["NIK harus 16 digit angka"] }),
   ]);
-  dbModule.saveProcessedSubmission(submission({ id: "s3", declaredProvinsi: "ACEH", timestamp: "02/08/2026 11:00:00", validCount: 1, invalidCount: 0 }), [
+  await dbModule.saveProcessedSubmission(submission({ id: "s3", declaredProvinsi: "ACEH", timestamp: "02/08/2026 11:00:00", validCount: 1, invalidCount: 0 }), [
     row({ rowNumber: 7, status: "valid", nik: "1104171510700099" }),
   ]);
 });
@@ -85,8 +85,8 @@ afterAll(() => {
 });
 
 describe("getErrorFrequency", () => {
-  it("categorizes and counts error occurrences across all submissions, most common first", () => {
-    const freq = analyticsModule.getErrorFrequency();
+  it("categorizes and counts error occurrences across all submissions, most common first", async () => {
+    const freq = await analyticsModule.getErrorFrequency();
     const byLabel = Object.fromEntries(freq.map((f) => [f.label, f.count]));
     expect(byLabel["Nama kosong"]).toBe(1);
     expect(byLabel["NIK kosong"]).toBe(1);
@@ -95,8 +95,8 @@ describe("getErrorFrequency", () => {
 });
 
 describe("getProvinceBreakdown", () => {
-  it("groups submission and row counts by declared Provinsi", () => {
-    const breakdown = analyticsModule.getProvinceBreakdown();
+  it("groups submission and row counts by declared Provinsi", async () => {
+    const breakdown = await analyticsModule.getProvinceBreakdown();
     const lampung = breakdown.find((b) => b.provinsi === "LAMPUNG")!;
     const aceh = breakdown.find((b) => b.provinsi === "ACEH")!;
     expect(lampung.submissionCount).toBe(2);
@@ -108,8 +108,8 @@ describe("getProvinceBreakdown", () => {
 });
 
 describe("getValidityTrend", () => {
-  it("buckets valid/invalid counts by calendar day, newest first", () => {
-    const trend = analyticsModule.getValidityTrend();
+  it("buckets valid/invalid counts by calendar day, newest first", async () => {
+    const trend = await analyticsModule.getValidityTrend();
     expect(trend[0].date).toBe("02/08/2026"); // newest first
     expect(trend[0].submissionCount).toBe(2); // s2 + s3 both on this date
     expect(trend[1].date).toBe("01/08/2026");
@@ -118,17 +118,17 @@ describe("getValidityTrend", () => {
 });
 
 describe("searchByNik", () => {
-  it("finds rows by partial NIK match across all submissions", () => {
-    const hits = dbModule.searchByNik("18110101019");
+  it("finds rows by partial NIK match across all submissions", async () => {
+    const hits = await dbModule.searchByNik("18110101019");
     expect(hits.length).toBeGreaterThanOrEqual(2); // s1's valid row + s2's valid row
     expect(hits.every((h) => h.nik.includes("18110101019"))).toBe(true);
   });
 
-  it("returns an empty array for a query with no digits", () => {
-    expect(dbModule.searchByNik("abc")).toEqual([]);
+  it("returns an empty array for a query with no digits", async () => {
+    expect(await dbModule.searchByNik("abc")).toEqual([]);
   });
 
-  it("returns an empty array when nothing matches", () => {
-    expect(dbModule.searchByNik("9999999999999999")).toEqual([]);
+  it("returns an empty array when nothing matches", async () => {
+    expect(await dbModule.searchByNik("9999999999999999")).toEqual([]);
   });
 });

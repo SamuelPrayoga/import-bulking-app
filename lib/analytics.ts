@@ -29,14 +29,13 @@ export interface ErrorFrequency {
 }
 
 /** Tallies how often each category of validation error occurs across every invalid row ever stored, most common first. */
-export function getErrorFrequency(): ErrorFrequency[] {
-  const rows = getDb().prepare("SELECT errors FROM submission_rows WHERE status = 'invalid'").all() as Array<{
-    errors: string;
-  }>;
+export async function getErrorFrequency(): Promise<ErrorFrequency[]> {
+  const db = await getDb();
+  const rs = await db.execute("SELECT errors FROM submission_rows WHERE status = 'invalid'");
 
   const counts = new Map<string, number>();
-  for (const row of rows) {
-    const errors: string[] = JSON.parse(row.errors);
+  for (const row of rs.rows) {
+    const errors: string[] = JSON.parse(row.errors as string);
     for (const raw of errors) {
       const label = categorizeError(raw);
       counts.set(label, (counts.get(label) ?? 0) + 1);
@@ -54,19 +53,19 @@ export interface ProvinceBreakdown {
 }
 
 /** Submission and row-validity counts grouped by the PIC's declared Provinsi (from the Form, not the file) — surfaces which regions have the most volume or the worst data quality. */
-export function getProvinceBreakdown(): ProvinceBreakdown[] {
-  return getDb()
-    .prepare(
-      `SELECT
-        declared_provinsi as provinsi,
-        COUNT(*) as submissionCount,
-        SUM(valid_count) as validRows,
-        SUM(invalid_count) as invalidRows
-      FROM submissions
-      GROUP BY declared_provinsi
-      ORDER BY submissionCount DESC`
-    )
-    .all() as ProvinceBreakdown[];
+export async function getProvinceBreakdown(): Promise<ProvinceBreakdown[]> {
+  const db = await getDb();
+  const rs = await db.execute(
+    `SELECT
+      declared_provinsi as provinsi,
+      COUNT(*) as submissionCount,
+      SUM(valid_count) as validRows,
+      SUM(invalid_count) as invalidRows
+    FROM submissions
+    GROUP BY declared_provinsi
+    ORDER BY submissionCount DESC`
+  );
+  return rs.rows as unknown as ProvinceBreakdown[];
 }
 
 export interface ValidityTrendPoint {
@@ -77,13 +76,14 @@ export interface ValidityTrendPoint {
 }
 
 /** Valid/invalid row counts bucketed by calendar day (from each submission's Form timestamp), newest day first — for spotting whether data quality is trending up or down over time. */
-export function getValidityTrend(): ValidityTrendPoint[] {
-  const rows = getDb()
-    .prepare("SELECT timestamp, valid_count as validCount, invalid_count as invalidCount FROM submissions WHERE status = 'processed'")
-    .all() as Array<{ timestamp: string; validCount: number; invalidCount: number }>;
+export async function getValidityTrend(): Promise<ValidityTrendPoint[]> {
+  const db = await getDb();
+  const rs = await db.execute(
+    "SELECT timestamp, valid_count as validCount, invalid_count as invalidCount FROM submissions WHERE status = 'processed'"
+  );
 
   const buckets = new Map<string, ValidityTrendPoint & { sortKey: number }>();
-  for (const r of rows) {
+  for (const r of rs.rows as unknown as Array<{ timestamp: string; validCount: number; invalidCount: number }>) {
     const datePart = r.timestamp.split(" ")[0]; // "DD/MM/YYYY"
     const [d, m, y] = datePart.split("/").map(Number);
     const sortKey = new Date(y, (m || 1) - 1, d || 1).getTime();

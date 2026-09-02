@@ -25,17 +25,20 @@ export interface AuditLogEntry {
   details: string;
 }
 
-export function recordAuditEvent(eventType: AuditEventType, actor: string, ip: string, details: string): void {
-  getDb()
-    .prepare(`INSERT INTO audit_log (timestamp, event_type, actor, ip, details) VALUES (@timestamp, @eventType, @actor, @ip, @details)`)
-    .run({ timestamp: new Date().toISOString(), eventType, actor, ip, details });
+export async function recordAuditEvent(eventType: AuditEventType, actor: string, ip: string, details: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `INSERT INTO audit_log (timestamp, event_type, actor, ip, details) VALUES (@timestamp, @eventType, @actor, @ip, @details)`,
+    args: { timestamp: new Date().toISOString(), eventType, actor, ip, details } as never,
+  });
 }
 
-export function listAuditLog(limit = 300): AuditLogEntry[] {
-  return getDb()
-    .prepare(
-      `SELECT id, timestamp, event_type as eventType, actor, ip, details
-      FROM audit_log ORDER BY id DESC LIMIT @limit`
-    )
-    .all({ limit }) as AuditLogEntry[];
+export async function listAuditLog(limit = 300): Promise<AuditLogEntry[]> {
+  const db = await getDb();
+  const rs = await db.execute({
+    sql: `SELECT id, timestamp, event_type as eventType, actor, ip, details
+    FROM audit_log ORDER BY id DESC LIMIT @limit`,
+    args: { limit } as never,
+  });
+  return rs.rows as unknown as AuditLogEntry[];
 }

@@ -80,11 +80,11 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
   };
 
   for (const response of responses) {
-    if (submissionExists(response.id)) {
+    if (await submissionExists(response.id)) {
       // The response row itself (e.g. its "Status" column K) can still change after we've
       // already processed the file — that's just a Sheets read, cheap enough to refresh on
       // every pull without re-downloading or re-validating anything.
-      updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
+      await updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
       result.alreadyProcessed++;
       continue;
     }
@@ -106,7 +106,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       const locationMismatch = checkProvinceMismatch(rawFileProvinsi, response.declaredProvinsi);
       const fileProvinsi = rawFileProvinsi || response.declaredProvinsi;
 
-      const validatedRows = validateSubmissionRows(rows, {
+      const validatedRows = await validateSubmissionRows(rows, {
         fileProvinsi,
         declaredProvinsi: response.declaredProvinsi,
         declaredKabKota: response.declaredKabKota,
@@ -147,7 +147,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
         sheetRowNumber: response.sheetRowNumber,
       };
 
-      saveProcessedSubmission(submission, validatedRows);
+      await saveProcessedSubmission(submission, validatedRows);
       result.newlyProcessed++;
       if (importMethod === "smart-mapped") result.smartMapped++;
     } catch (err) {
@@ -158,8 +158,8 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       // Still record a "failed" submission row so the same broken response isn't retried forever
       // on every future pull — the operator can see it (and the reason) in the history and follow
       // up manually.
-      if (!submissionExists(response.id)) {
-        saveProcessedSubmission(
+      if (!(await submissionExists(response.id))) {
+        await saveProcessedSubmission(
           {
             id: response.id,
             timestamp: response.timestamp,

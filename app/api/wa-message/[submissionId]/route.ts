@@ -7,12 +7,12 @@ export async function GET(
   { params }: { params: Promise<{ submissionId: string }> }
 ) {
   const { submissionId } = await params;
-  const submission = getSubmission(submissionId);
+  const submission = await getSubmission(submissionId);
   if (!submission) {
     return NextResponse.json({ error: "Submission tidak ditemukan" }, { status: 404 });
   }
 
-  const rows = getSubmissionRows(submissionId);
+  const rows = await getSubmissionRows(submissionId);
   const text = buildWaMessage(submission, rows);
   const waLink = buildWaLink(submission.picWhatsapp, text);
 

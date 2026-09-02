@@ -1,41 +1,59 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 let backupModule: typeof import("./backup");
 let dbModule: typeof import("./db");
 let dbTmpDir: string;
-let backupTmpDir: string;
+
+/** In-memory stand-in for the real Vercel Blob store — tests shouldn't need a live token/network. */
+function createFakeBackupStorage() {
+  const store = new Map<string, { content: string; uploadedAt: string }>();
+  return {
+    async put(pathname: string, content: string) {
+      store.set(pathname, { content, uploadedAt: new Date().toISOString() });
+    },
+    async list() {
+      return [...store.entries()].map(([pathname, v]) => ({
+        pathname,
+        sizeBytes: Buffer.byteLength(v.content),
+        uploadedAt: v.uploadedAt,
+      }));
+    },
+    async del(pathname: string) {
+      store.delete(pathname);
+    },
+  };
+}
 
 beforeAll(async () => {
   dbTmpDir = mkdtempSync(path.join(tmpdir(), "import-bulking-backup-db-"));
-  backupTmpDir = mkdtempSync(path.join(tmpdir(), "import-bulking-backup-dest-"));
   process.env.APP_DB_PATH = path.join(dbTmpDir, "test.db");
-  process.env.APP_BACKUP_DIR = backupTmpDir;
   dbModule = await import("./db");
   backupModule = await import("./backup");
-  dbModule.getDb(); // force-create the source DB file so backup() has something real to copy
+  await dbModule.getDb(); // ensure the schema exists so createBackup() has real tables to query
+  backupModule.setBackupStorage(createFakeBackupStorage());
 });
 
 afterAll(() => {
   dbModule.closeDb();
   rmSync(dbTmpDir, { recursive: true, force: true });
-  rmSync(backupTmpDir, { recursive: true, force: true });
   delete process.env.APP_DB_PATH;
-  delete process.env.APP_BACKUP_DIR;
 });
 
 describe("createBackup / listBackups", () => {
-  it("creates a real, readable backup file", async () => {
-    const backupPath = await backupModule.createBackup();
-    expect(existsSync(backupPath)).toBe(true);
+  it("creates a backup that shows up in the listing", async () => {
+    const name = await backupModule.createBackup();
+    const backups = await backupModule.listBackups();
+    expect(backups.some((b) => b.name === name)).toBe(true);
+    expect(backups.find((b) => b.name === name)?.sizeBytes).toBeGreaterThan(0);
   });
 
   it("lists backups newest-first with size info", async () => {
-    await new Promise((r) => setTimeout(r, 5)); // ensure a distinct mtime from the first backup
+    await new Promise((r) => setTimeout(r, 5)); // ensure a distinct uploadedAt from the first backup
     await backupModule.createBackup();
-    const backups = backupModule.listBackups();
+    const backups = await backupModule.listBackups();
     expect(backups.length).toBeGreaterThanOrEqual(2);
     expect(backups[0].sizeBytes).toBeGreaterThan(0);
     // newest-first: first entry's createdAt should be >= the last entry's

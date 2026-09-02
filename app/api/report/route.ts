@@ -5,12 +5,12 @@ import { recordAuditEvent } from "../../../lib/auditLog";
 
 export async function GET(request: NextRequest) {
   const submissionId = request.nextUrl.searchParams.get("submissionId") ?? undefined;
-  const rows = getReportRows(submissionId);
+  const rows = await getReportRows(submissionId);
   const workbook = buildConsolidatedReport(rows);
   const buffer = await reportToBuffer(workbook);
 
   const ip = request.headers.get("x-forwarded-for") ?? "local";
-  recordAuditEvent(
+  await recordAuditEvent(
     "report_download",
     process.env.ADMIN_EMAIL ?? "-",
     ip,

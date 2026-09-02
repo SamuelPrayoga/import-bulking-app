@@ -15,8 +15,8 @@ async function main() {
   const responses = await getFormResponses();
   let updated = 0;
   for (const response of responses) {
-    if (submissionExists(response.id)) {
-      updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
+    if (await submissionExists(response.id)) {
+      await updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
       updated++;
     }
   }

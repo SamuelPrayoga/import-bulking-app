@@ -8,9 +8,9 @@ import { SubmissionsExplorer } from "../../components/SubmissionsExplorer";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
-  const submissions = listSubmissions();
-  const health = getSystemHealth();
+export default async function HomePage() {
+  const submissions = await listSubmissions();
+  const health = await getSystemHealth();
 
   return (
     <>

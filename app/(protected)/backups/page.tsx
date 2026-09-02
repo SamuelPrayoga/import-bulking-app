@@ -19,8 +19,8 @@ function formatTimestamp(iso: string): string {
   }
 }
 
-export default function BackupsPage() {
-  const backups = listBackups();
+export default async function BackupsPage() {
+  const backups = await listBackups();
 
   return (
     <>

@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3", "exceljs"],
-    instrumentationHook: true,
+    serverComponentsExternalPackages: ["@libsql/client", "exceljs"],
   },
   async headers() {
     // Every page here can show real NIK/phone-number data, so beyond the login gate: block

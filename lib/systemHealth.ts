@@ -10,21 +10,22 @@ export interface SystemHealth {
 }
 
 /** A single at-a-glance snapshot for the home page: is anything actually broken right now, without having to dig through the audit log or the filtered list manually. */
-export function getSystemHealth(): SystemHealth {
-  const lastPull = getDb()
-    .prepare("SELECT timestamp, details FROM audit_log WHERE event_type = 'pull_responses' ORDER BY id DESC LIMIT 1")
-    .get() as { timestamp: string; details: string } | undefined;
+export async function getSystemHealth(): Promise<SystemHealth> {
+  const db = await getDb();
+  const lastPullRs = await db.execute(
+    "SELECT timestamp, details FROM audit_log WHERE event_type = 'pull_responses' ORDER BY id DESC LIMIT 1"
+  );
+  const lastPull = lastPullRs.rows[0] as unknown as { timestamp: string; details: string } | undefined;
 
-  const backups = listBackups();
+  const backups = await listBackups();
 
   const failedSubmissionCount = (
-    getDb().prepare("SELECT COUNT(*) as n FROM submissions WHERE status = 'failed'").get() as { n: number }
+    (await db.execute("SELECT COUNT(*) as n FROM submissions WHERE status = 'failed'")).rows[0] as unknown as { n: number }
   ).n;
 
   const pendingFollowUpCount = (
-    getDb()
-      .prepare("SELECT COUNT(*) as n FROM submissions WHERE status = 'processed' AND followed_up_at IS NULL")
-      .get() as { n: number }
+    (await db.execute("SELECT COUNT(*) as n FROM submissions WHERE status = 'processed' AND followed_up_at IS NULL"))
+      .rows[0] as unknown as { n: number }
   ).n;
 
   return {

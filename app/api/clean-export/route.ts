@@ -9,16 +9,18 @@ export async function GET(request: NextRequest) {
   const pendingOnly = request.nextUrl.searchParams.get("pending") === "1";
   // A pending submission is often a resubmission/correction of an earlier one still pending too —
   // only the "sheet pending" file feeds the destination CMS directly, so NIK must be unique there.
-  const rows = pendingOnly ? dedupeByNik(getReportRows(submissionId, { pendingOnly })) : getReportRows(submissionId);
+  const rows = pendingOnly
+    ? dedupeByNik(await getReportRows(submissionId, { pendingOnly }))
+    : await getReportRows(submissionId);
 
   const workbook = submissionId
-    ? buildCleanSubmissionFile(getSubmission(submissionId)?.fileProvinsi ?? "", rows)
+    ? buildCleanSubmissionFile((await getSubmission(submissionId))?.fileProvinsi ?? "", rows)
     : buildCleanConsolidatedFile(rows);
 
   const buffer = await reportToBuffer(workbook);
 
   const ip = request.headers.get("x-forwarded-for") ?? "local";
-  recordAuditEvent(
+  await recordAuditEvent(
     "clean_export_download",
     process.env.ADMIN_EMAIL ?? "-",
     ip,

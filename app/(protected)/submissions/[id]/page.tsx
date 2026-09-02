@@ -16,10 +16,10 @@ export default async function SubmissionDetailPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
-  const submission = getSubmission(id);
+  const submission = await getSubmission(id);
   if (!submission) notFound();
 
-  const rows = getSubmissionRows(id);
+  const rows = await getSubmissionRows(id);
 
   // Preserve the list page's search/filter/page state — the Review link on the list carries its
   // own query string forward here, so bouncing "back" returns to the same filtered view.

@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Jawaban captcha salah atau kadaluarsa." }, { status: 400 });
   }
 
-  const submissions = findSubmissionsByEmail(email);
+  const submissions = await findSubmissionsByEmail(email);
 
   if (submissions.length === 0) {
     recordFailedAttempt(rateLimitKey);
@@ -53,5 +53,5 @@ export async function POST(request: NextRequest) {
   }
   clearFailedAttempts(rateLimitKey);
 
-  return NextResponse.json({ results: submissions.map(toPublicSubmissionStatus) });
+  return NextResponse.json({ results: await Promise.all(submissions.map(toPublicSubmissionStatus)) });
 }
