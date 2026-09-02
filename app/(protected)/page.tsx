@@ -24,6 +24,7 @@ export default async function HomePage() {
     FROM submissions`
   );
   const debugFirstQueryCount = debugRs.rows.length;
+  await new Promise((r) => setTimeout(r, 300)); // TEMP DEBUG: test whether a delay avoids the emptiness
 
   const submissions = await listSubmissions();
   const health = await getSystemHealth();
