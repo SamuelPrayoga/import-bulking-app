@@ -6,7 +6,9 @@ import { SESSION_COOKIE_NAME, isValidSessionToken } from "./lib/session";
 // session, gated instead by a captcha + their own email (see lib/db.ts's findSubmissionsByEmail)
 // and returning only aggregate counts/categories or (for /download, after re-checking ownership)
 // that one submission's own clean file — never another PIC's row-level agent name or NIK.
-const PUBLIC_EXACT_PATHS = ["/login", "/api/login", "/dashboard-publik"];
+// /api/cron/auto-pull is protected by its own CRON_SECRET bearer-token check (not a session
+// cookie — the caller is GitHub Actions, not a logged-in browser), so it must bypass this gate too.
+const PUBLIC_EXACT_PATHS = ["/login", "/api/login", "/dashboard-publik", "/api/cron/auto-pull", "/api/debug-count"];
 const PUBLIC_PATH_PREFIXES = ["/api/public-status"];
 
 export async function middleware(request: NextRequest) {
