@@ -319,7 +319,15 @@ export async function saveProcessedSubmission(submission: SubmissionRecord, rows
 
     await tx.commit();
   } finally {
-    tx.close();
+    // Not `await tx.close()` unguarded: a throw here (e.g. closing an already-committed
+    // transaction) would override a successful `tx.commit()` above — a `finally` block that
+    // throws replaces the try block's outcome even when the try already succeeded — silently
+    // turning a real success into an apparent failure the caller then retries as a duplicate.
+    try {
+      tx.close();
+    } catch {
+      // already committed; a failure to close cleanly here isn't a real error.
+    }
   }
   });
 }
@@ -559,7 +567,13 @@ export async function deleteSubmission(submissionId: string): Promise<void> {
       await tx.execute({ sql: "DELETE FROM submissions WHERE id = ?", args: [submissionId] });
       await tx.commit();
     } finally {
-      tx.close();
+      // See saveProcessedSubmission's identical guard above: a throw from close() here must never
+      // override a commit that already succeeded.
+      try {
+        tx.close();
+      } catch {
+        // already committed; a failure to close cleanly here isn't a real error.
+      }
     }
   });
 }

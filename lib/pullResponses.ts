@@ -175,39 +175,47 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
 
       // Still record a "failed" submission row so the same broken response isn't retried forever
       // on every future pull — the operator can see it (and the reason) in the history and follow
-      // up manually.
+      // up manually. Wrapped in its own try/catch as defense in depth: if the response above
+      // somehow actually committed despite throwing (a client/transport quirk, not something this
+      // code can fully rule out), this insert would itself fail on the same id — that must not take
+      // down the rest of the pull for every other response still queued up.
       if (!knownIds.has(response.id)) {
         knownIds.add(response.id);
-        await saveProcessedSubmission(
-          {
-            id: response.id,
-            timestamp: response.timestamp,
-            email: response.email,
-            picName: response.picName,
-            picWhatsapp: response.picWhatsappRaw,
-            picWhatsappValid: response.picWhatsappValid,
-            declaredProvinsi: response.declaredProvinsi,
-            declaredKabKota: response.declaredKabKota,
-            instansi: response.instansi,
-            driveFileId: response.driveFileId ?? "",
-            fileProvinsi: null,
-            sheetStatus: response.sheetStatus,
-            locationMismatch: false,
-            validCount: 0,
-            invalidCount: 0,
-            status: "failed",
-            processedAt: new Date().toISOString(),
-            errorMessage: message,
-            importMethod: "template",
-            mappingScore: null,
-            followedUpAt: null,
-            hasNameMismatch: false,
-            hasKabKotaAutoFix: false,
-            hasJobFallback: false,
-            sheetRowNumber: response.sheetRowNumber,
-          },
-          []
-        );
+        try {
+          await saveProcessedSubmission(
+            {
+              id: response.id,
+              timestamp: response.timestamp,
+              email: response.email,
+              picName: response.picName,
+              picWhatsapp: response.picWhatsappRaw,
+              picWhatsappValid: response.picWhatsappValid,
+              declaredProvinsi: response.declaredProvinsi,
+              declaredKabKota: response.declaredKabKota,
+              instansi: response.instansi,
+              driveFileId: response.driveFileId ?? "",
+              fileProvinsi: null,
+              sheetStatus: response.sheetStatus,
+              locationMismatch: false,
+              validCount: 0,
+              invalidCount: 0,
+              status: "failed",
+              processedAt: new Date().toISOString(),
+              errorMessage: message,
+              importMethod: "template",
+              mappingScore: null,
+              followedUpAt: null,
+              hasNameMismatch: false,
+              hasKabKotaAutoFix: false,
+              hasJobFallback: false,
+              sheetRowNumber: response.sheetRowNumber,
+            },
+            []
+          );
+        } catch {
+          // Already recorded in result.errors above; a submission id already existing here means
+          // the earlier attempt actually succeeded despite throwing, so there's nothing left to do.
+        }
       }
     }
   }
