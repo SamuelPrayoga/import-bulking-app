@@ -499,6 +499,36 @@ export async function updateSheetStatus(submissionId: string, sheetStatus: strin
   );
 }
 
+/**
+ * Every submission id with its current sheet_status/sheet_row_number, for pullNewResponses() to
+ * check "does this response already exist, and did its sheet status change" against in-memory —
+ * one round trip for up to thousands of responses, instead of two queries (exists + update) per
+ * response, which used to be slow enough on a remote Turso connection to exceed Vercel's function
+ * timeout on a pull where almost everything was already processed.
+ */
+export async function getSubmissionSheetStatuses(): Promise<Map<string, { sheetStatus: string; sheetRowNumber: number | null }>> {
+  const rs = await withDb((db) => db.execute("SELECT id, sheet_status as sheetStatus, sheet_row_number as sheetRowNumber FROM submissions"));
+  const map = new Map<string, { sheetStatus: string; sheetRowNumber: number | null }>();
+  for (const r of rs.rows as unknown as Array<{ id: string; sheetStatus: string; sheetRowNumber: number | null }>) {
+    map.set(r.id, { sheetStatus: r.sheetStatus, sheetRowNumber: r.sheetRowNumber });
+  }
+  return map;
+}
+
+/** Updates sheet_status/sheet_row_number for many submissions in a single round trip — the batched counterpart to updateSheetStatus, for pullNewResponses()'s per-pull refresh. */
+export async function batchUpdateSheetStatuses(updates: Array<{ id: string; sheetStatus: string; sheetRowNumber: number }>): Promise<void> {
+  if (updates.length === 0) return;
+  await withDb((db) =>
+    db.batch(
+      updates.map((u) => ({
+        sql: "UPDATE submissions SET sheet_status = @sheetStatus, sheet_row_number = @sheetRowNumber WHERE id = @id",
+        args: { id: u.id, sheetStatus: u.sheetStatus, sheetRowNumber: u.sheetRowNumber } as never,
+      })),
+      "write"
+    )
+  );
+}
+
 /** Marks (or unmarks) a submission as followed up with the PIC — an operator-driven workflow flag, independent of the row-level Valid/Invalid status. */
 export async function setFollowUpStatus(submissionId: string, followedUp: boolean): Promise<void> {
   await withDb((db) =>

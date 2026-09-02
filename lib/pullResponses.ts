@@ -2,7 +2,7 @@ import { downloadDriveFile, getFormResponses } from "./google";
 import { loadWorkbook, parseFormSheet } from "./parseTemplate";
 import { SMART_MAP_AUTO_ACCEPT_SCORE, trySmartMap } from "./smartMapping";
 import { checkProvinceMismatch, isJobFallbackWarning, isKabKotaAutoFixWarning, isNameMismatchWarning, validateSubmissionRows } from "./validate";
-import { findNikHistory, saveProcessedSubmission, submissionExists, updateSheetStatus } from "./db";
+import { batchUpdateSheetStatuses, findNikHistory, getSubmissionSheetStatuses, saveProcessedSubmission } from "./db";
 import type { RawAgentRow, SubmissionRecord } from "../types/index";
 
 export interface PullResponsesResult {
@@ -70,6 +70,14 @@ function fillMissingKotaKabupaten(rows: RawAgentRow[], declaredKabKota: string):
 export async function pullNewResponses(): Promise<PullResponsesResult> {
   const responses = await getFormResponses();
 
+  // Fetched once up front rather than one "does this exist" query per response — with hundreds of
+  // historical responses (the common case: everything already processed, nothing new this pull),
+  // that used to mean two round trips to Turso per response, easily enough to exceed Vercel's
+  // function timeout even though there was no actual work to do.
+  const existingStatuses = await getSubmissionSheetStatuses();
+  const knownIds = new Set(existingStatuses.keys());
+  const sheetStatusUpdates: Array<{ id: string; sheetStatus: string; sheetRowNumber: number }> = [];
+
   const result: PullResponsesResult = {
     totalResponses: responses.length,
     newlyProcessed: 0,
@@ -80,11 +88,14 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
   };
 
   for (const response of responses) {
-    if (await submissionExists(response.id)) {
-      // The response row itself (e.g. its "Status" column K) can still change after we've
-      // already processed the file — that's just a Sheets read, cheap enough to refresh on
-      // every pull without re-downloading or re-validating anything.
-      await updateSheetStatus(response.id, response.sheetStatus, response.sheetRowNumber);
+    const existingEntry = existingStatuses.get(response.id);
+    if (existingEntry) {
+      // The response row itself (e.g. its "Status" column K) can still change after we've already
+      // processed the file — collected here and written in one batched round trip at the end,
+      // rather than one update per response, for the same reason as the up-front fetch above.
+      if (existingEntry.sheetStatus !== response.sheetStatus || existingEntry.sheetRowNumber !== response.sheetRowNumber) {
+        sheetStatusUpdates.push({ id: response.id, sheetStatus: response.sheetStatus, sheetRowNumber: response.sheetRowNumber });
+      }
       result.alreadyProcessed++;
       continue;
     }
@@ -148,6 +159,7 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       };
 
       await saveProcessedSubmission(submission, validatedRows);
+      knownIds.add(response.id);
       result.newlyProcessed++;
       if (importMethod === "smart-mapped") result.smartMapped++;
     } catch (err) {
@@ -158,7 +170,8 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       // Still record a "failed" submission row so the same broken response isn't retried forever
       // on every future pull — the operator can see it (and the reason) in the history and follow
       // up manually.
-      if (!(await submissionExists(response.id))) {
+      if (!knownIds.has(response.id)) {
+        knownIds.add(response.id);
         await saveProcessedSubmission(
           {
             id: response.id,
@@ -192,6 +205,8 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
       }
     }
   }
+
+  await batchUpdateSheetStatuses(sheetStatusUpdates);
 
   return result;
 }
