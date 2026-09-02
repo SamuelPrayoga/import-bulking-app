@@ -1,5 +1,5 @@
 import { put, list, del } from "@vercel/blob";
-import { getDb } from "./db";
+import { withDb } from "./db";
 import type { ResultSet } from "@libsql/client";
 
 // Backups are triggered by real data changes (a pull), not a fixed clock — so 20 is "the last ~20
@@ -62,13 +62,13 @@ function rowsToPlainObjects(rs: ResultSet): Array<Record<string, unknown>> {
 
 /** Dumps every table to one JSON blob (there's no better-sqlite3-style binary snapshot API against a remote libSQL/Turso database), then prunes anything past MAX_BACKUPS. */
 export async function createBackup(): Promise<string> {
-  // Each query gets its own getDb() call (a fresh client) rather than sharing one — see the
-  // comment on getDb() in lib/db.ts for why reusing one client across multiple queries is unsafe here.
+  // Each query goes through its own withDb() call — its shared queue naturally serializes these
+  // even though they're launched together via Promise.all — see withDb()'s comment in lib/db.ts.
   const [submissions, submissionRows, nikRegistry, auditLog] = await Promise.all([
-    (await getDb()).execute("SELECT * FROM submissions"),
-    (await getDb()).execute("SELECT * FROM submission_rows"),
-    (await getDb()).execute("SELECT * FROM nik_registry"),
-    (await getDb()).execute("SELECT * FROM audit_log"),
+    withDb((db) => db.execute("SELECT * FROM submissions")),
+    withDb((db) => db.execute("SELECT * FROM submission_rows")),
+    withDb((db) => db.execute("SELECT * FROM nik_registry")),
+    withDb((db) => db.execute("SELECT * FROM audit_log")),
   ]);
 
   const dump = {

@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { withDb } from "./db";
 
 // Raw error strings from lib/validate.ts carry dynamic details (a NIK, a count, a JOB title) that
 // would otherwise make every occurrence look like a distinct error in a frequency count. These
@@ -30,8 +30,7 @@ export interface ErrorFrequency {
 
 /** Tallies how often each category of validation error occurs across every invalid row ever stored, most common first. */
 export async function getErrorFrequency(): Promise<ErrorFrequency[]> {
-  const db = await getDb();
-  const rs = await db.execute("SELECT errors FROM submission_rows WHERE status = 'invalid'");
+  const rs = await withDb((db) => db.execute("SELECT errors FROM submission_rows WHERE status = 'invalid'"));
 
   const counts = new Map<string, number>();
   for (const row of rs.rows) {
@@ -54,9 +53,9 @@ export interface ProvinceBreakdown {
 
 /** Submission and row-validity counts grouped by the PIC's declared Provinsi (from the Form, not the file) — surfaces which regions have the most volume or the worst data quality. */
 export async function getProvinceBreakdown(): Promise<ProvinceBreakdown[]> {
-  const db = await getDb();
-  const rs = await db.execute(
-    `SELECT
+  const rs = await withDb((db) =>
+    db.execute(
+      `SELECT
       declared_provinsi as provinsi,
       COUNT(*) as submissionCount,
       SUM(valid_count) as validRows,
@@ -64,6 +63,7 @@ export async function getProvinceBreakdown(): Promise<ProvinceBreakdown[]> {
     FROM submissions
     GROUP BY declared_provinsi
     ORDER BY submissionCount DESC`
+    )
   );
   return rs.rows as unknown as ProvinceBreakdown[];
 }
@@ -77,9 +77,8 @@ export interface ValidityTrendPoint {
 
 /** Valid/invalid row counts bucketed by calendar day (from each submission's Form timestamp), newest day first — for spotting whether data quality is trending up or down over time. */
 export async function getValidityTrend(): Promise<ValidityTrendPoint[]> {
-  const db = await getDb();
-  const rs = await db.execute(
-    "SELECT timestamp, valid_count as validCount, invalid_count as invalidCount FROM submissions WHERE status = 'processed'"
+  const rs = await withDb((db) =>
+    db.execute("SELECT timestamp, valid_count as validCount, invalid_count as invalidCount FROM submissions WHERE status = 'processed'")
   );
 
   const buckets = new Map<string, ValidityTrendPoint & { sortKey: number }>();

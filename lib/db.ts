@@ -31,19 +31,13 @@ function buildClientConfig(): { url: string; authToken?: string; fetch: typeof n
 
 /**
  * Returns a fresh libSQL client, one per call — never a shared/reused instance. `createClient()`
- * itself does no network I/O (that only happens on `.execute()`), so this is cheap, and matches
- * `@libsql/client`'s own documented model ("every statement... is executed in its own logical
- * database connection"). This is a deliberate departure from the usual "cache the client" pattern:
- * on Vercel's serverless runtime, a single `Client` reused for a second, non-transactional
- * `.execute()` call was observed to silently return an empty result set instead of throwing —
- * every function in this file that needs more than one query must call `getDb()` again for each
- * one (an interactive `db.transaction()` is unaffected — its multiple `tx.execute()` calls share
- * one transaction by design and work correctly).
+ * itself does no network I/O (that only happens on `.execute()`), so this is cheap. Schema
+ * initialization only actually runs once per process, via the memoized `schemaReady` promise. Uses
+ * Turso (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN) when configured — production — and otherwise falls
+ * back to a local libSQL file (same APP_DB_PATH override the tests use).
  *
- * Uses Turso (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN) when configured — production — and otherwise
- * falls back to a local libSQL file (same APP_DB_PATH override the tests use), so `npm run
- * dev`/tests need zero Turso setup. Schema initialization itself still only actually runs once per
- * process, via the memoized `schemaReady` promise.
+ * Prefer `withDb()` below for actually running a query — this is exported mainly for
+ * interactive-transaction call sites and test setup that need the client object directly.
  */
 export async function getDb(): Promise<Client> {
   const client = createClient(buildClientConfig());
@@ -52,9 +46,45 @@ export async function getDb(): Promise<Client> {
   return client;
 }
 
+let lastQueryDone: Promise<void> = Promise.resolve();
+// Empirically the smallest reliable gap found (50ms always worked in testing; this adds margin).
+// Only applied against real Turso — the local file: driver is a native binary with no HTTP
+// round-trip, so there's nothing to race and no reason to slow down `npm run dev`/tests with it.
+const MIN_QUERY_GAP_MS = 100;
+
+/**
+ * Runs one query/operation against a fresh client, serialized after any previous `withDb()` call
+ * with a minimum gap enforced in between. On Vercel's serverless runtime, issuing a second,
+ * independent HTTP request to Turso immediately after a prior one — even via unrelated
+ * plain-`.execute()` calls, each with its own fresh Client — was observed to silently return an
+ * empty result set instead of throwing or erroring; a small enforced gap between requests reliably
+ * avoided it in testing (confirmed down to 50ms; this uses 100ms for margin). An interactive
+ * `db.transaction()` should be run through here too (wrap the whole open→execute→commit sequence
+ * in the callback) so its request doesn't collide with another `withDb()` call either.
+ */
+export async function withDb<T>(fn: (db: Client) => Promise<T>): Promise<T> {
+  const previous = lastQueryDone;
+  let releaseNext: () => void = () => {};
+  lastQueryDone = new Promise<void>((resolve) => {
+    releaseNext = resolve;
+  });
+  await previous;
+  try {
+    const client = await getDb();
+    return await fn(client);
+  } finally {
+    if (process.env.TURSO_DATABASE_URL) {
+      setTimeout(releaseNext, MIN_QUERY_GAP_MS);
+    } else {
+      releaseNext();
+    }
+  }
+}
+
 /** Forces the next getDb() call to re-run schema init (e.g. against a different APP_DB_PATH). Test-only. */
 export function closeDb(): void {
   schemaReady = null;
+  lastQueryDone = Promise.resolve();
 }
 
 async function initSchema(client: Client): Promise<void> {
@@ -151,17 +181,17 @@ async function initSchema(client: Client): Promise<void> {
 }
 
 export async function submissionExists(id: string): Promise<boolean> {
-  const db = await getDb();
-  const rs = await db.execute({ sql: "SELECT 1 FROM submissions WHERE id = ?", args: [id] });
+  const rs = await withDb((db) => db.execute({ sql: "SELECT 1 FROM submissions WHERE id = ?", args: [id] }));
   return rs.rows.length > 0;
 }
 
 export async function findNikInRegistry(nik: string): Promise<NikRegistryHit | null> {
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: "SELECT pic_name as picName, timestamp FROM nik_registry WHERE nik = ?",
-    args: [nik],
-  });
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: "SELECT pic_name as picName, timestamp FROM nik_registry WHERE nik = ?",
+      args: [nik],
+    })
+  );
   return (rs.rows[0] as unknown as NikRegistryHit) ?? null;
 }
 
@@ -171,32 +201,33 @@ export async function findNikInRegistry(nik: string): Promise<NikRegistryHit | n
  * chronological order, so a submission never sees NIKs from submissions processed after it.
  */
 export async function findNikHistory(nik: string, beforeProcessedAt?: string): Promise<NikHistoryHit | null> {
-  const db = await getDb();
-  const rs = beforeProcessedAt
-    ? await db.execute({
-        sql: `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
+  const rs = await withDb((db) =>
+    beforeProcessedAt
+      ? db.execute({
+          sql: `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
            FROM submission_rows r
            JOIN submissions s ON s.id = r.submission_id
            WHERE r.nik = ? AND s.processed_at < ?
            ORDER BY s.processed_at DESC
            LIMIT 1`,
-        args: [nik, beforeProcessedAt],
-      })
-    : await db.execute({
-        sql: `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
+          args: [nik, beforeProcessedAt],
+        })
+      : db.execute({
+          sql: `SELECT r.nama as nama, s.pic_name as picName, s.timestamp as timestamp
            FROM submission_rows r
            JOIN submissions s ON s.id = r.submission_id
            WHERE r.nik = ?
            ORDER BY s.processed_at DESC
            LIMIT 1`,
-        args: [nik],
-      });
+          args: [nik],
+        })
+  );
   return (rs.rows[0] as unknown as NikHistoryHit) ?? null;
 }
 
 /** Persists one fully-validated submission (header + all rows) and registers its valid-format NIKs, atomically. */
 export async function saveProcessedSubmission(submission: SubmissionRecord, rows: ValidatedRow[]): Promise<void> {
-  const db = await getDb();
+  await withDb(async (db) => {
   const tx = await db.transaction("write");
   try {
     await tx.execute({
@@ -290,12 +321,13 @@ export async function saveProcessedSubmission(submission: SubmissionRecord, rows
   } finally {
     tx.close();
   }
+  });
 }
 
 export async function listSubmissions(): Promise<SubmissionRecord[]> {
-  const db = await getDb();
-  const rs = await db.execute(
-    `SELECT
+  const rs = await withDb((db) =>
+    db.execute(
+      `SELECT
       id, timestamp, email, pic_name as picName, pic_whatsapp as picWhatsapp,
       pic_whatsapp_valid as picWhatsappValid, declared_provinsi as declaredProvinsi,
       declared_kabkota as declaredKabKota, instansi, drive_file_id as driveFileId,
@@ -305,6 +337,7 @@ export async function listSubmissions(): Promise<SubmissionRecord[]> {
       followed_up_at as followedUpAt, has_name_mismatch as hasNameMismatch, has_kabkota_autofix as hasKabKotaAutoFix,
       sheet_row_number as sheetRowNumber, has_job_fallback as hasJobFallback
     FROM submissions`
+    )
   );
 
   const submissions = rs.rows.map((r) => ({
@@ -335,9 +368,9 @@ export async function findSubmissionsByEmail(email: string): Promise<SubmissionR
 }
 
 export async function getSubmission(submissionId: string): Promise<SubmissionRecord | null> {
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: `SELECT
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: `SELECT
       id, timestamp, email, pic_name as picName, pic_whatsapp as picWhatsapp,
       pic_whatsapp_valid as picWhatsappValid, declared_provinsi as declaredProvinsi,
       declared_kabkota as declaredKabKota, instansi, drive_file_id as driveFileId,
@@ -347,8 +380,9 @@ export async function getSubmission(submissionId: string): Promise<SubmissionRec
       followed_up_at as followedUpAt, has_name_mismatch as hasNameMismatch, has_kabkota_autofix as hasKabKotaAutoFix,
       sheet_row_number as sheetRowNumber, has_job_fallback as hasJobFallback
     FROM submissions WHERE id = ?`,
-    args: [submissionId],
-  });
+      args: [submissionId],
+    })
+  );
   const r = rs.rows[0];
   if (!r) return null;
   return {
@@ -373,13 +407,14 @@ export async function getRawSubmissionRows(submissionId: string): Promise<Array<
   kotaKabupaten: string;
   nikNumericRisk: boolean;
 }>> {
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: `SELECT id as dbId, row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten,
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: `SELECT id as dbId, row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten,
       nik_numeric_risk as nikNumericRisk
     FROM submission_rows WHERE submission_id = ? ORDER BY row_number ASC`,
-    args: [submissionId],
-  });
+      args: [submissionId],
+    })
+  );
   return rs.rows.map((r) => ({ ...(r as unknown as Record<string, unknown>), nikNumericRisk: Boolean(r.nikNumericRisk) })) as Array<{
     dbId: number;
     rowNumber: number;
@@ -398,25 +433,26 @@ export async function updateRowValidation(
   dbId: number,
   patch: Pick<ValidatedRow, "nama" | "nik" | "noWa" | "job" | "kotaKabupaten" | "status" | "errors" | "warnings" | "kodeProv" | "kodeKota" | "jobId">
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute({
-    sql: `UPDATE submission_rows SET nama = @nama, nik = @nik, no_wa = @noWa, job = @job, kota_kabupaten = @kotaKabupaten, status = @status,
+  await withDb((db) =>
+    db.execute({
+      sql: `UPDATE submission_rows SET nama = @nama, nik = @nik, no_wa = @noWa, job = @job, kota_kabupaten = @kotaKabupaten, status = @status,
       errors = @errors, warnings = @warnings, kode_prov = @kodeProv, kode_kota = @kodeKota, job_id = @jobId WHERE id = @dbId`,
-    args: {
-      dbId,
-      nama: patch.nama,
-      nik: patch.nik,
-      noWa: patch.noWa,
-      job: patch.job,
-      kotaKabupaten: patch.kotaKabupaten,
-      status: patch.status,
-      errors: JSON.stringify(patch.errors),
-      warnings: JSON.stringify(patch.warnings),
-      kodeProv: patch.kodeProv,
-      kodeKota: patch.kodeKota,
-      jobId: patch.jobId,
-    } as never,
-  });
+      args: {
+        dbId,
+        nama: patch.nama,
+        nik: patch.nik,
+        noWa: patch.noWa,
+        job: patch.job,
+        kotaKabupaten: patch.kotaKabupaten,
+        status: patch.status,
+        errors: JSON.stringify(patch.errors),
+        warnings: JSON.stringify(patch.warnings),
+        kodeProv: patch.kodeProv,
+        kodeKota: patch.kodeKota,
+        jobId: patch.jobId,
+      } as never,
+    })
+  );
 }
 
 /** Updates a submission's cached valid/invalid row counts and name-mismatch flag (used by the revalidation backfill). */
@@ -434,79 +470,84 @@ export async function updateSubmissionCounts(
   // the audit trail for exactly the rows these flags exist to surface. has_name_mismatch doesn't
   // have this problem (its NIK history comparison is unaffected by anything this function
   // changes), so it stays a live value.
-  const db = await getDb();
-  await db.execute({
-    sql: `UPDATE submissions SET valid_count = @validCount, invalid_count = @invalidCount,
+  await withDb((db) =>
+    db.execute({
+      sql: `UPDATE submissions SET valid_count = @validCount, invalid_count = @invalidCount,
       has_name_mismatch = @hasNameMismatch,
       has_kabkota_autofix = has_kabkota_autofix OR @hasKabKotaAutoFix,
       has_job_fallback = has_job_fallback OR @hasJobFallback
       WHERE id = @submissionId`,
-    args: {
-      submissionId,
-      validCount,
-      invalidCount,
-      hasNameMismatch: hasNameMismatch ? 1 : 0,
-      hasKabKotaAutoFix: hasKabKotaAutoFix ? 1 : 0,
-      hasJobFallback: hasJobFallback ? 1 : 0,
-    } as never,
-  });
+      args: {
+        submissionId,
+        validCount,
+        invalidCount,
+        hasNameMismatch: hasNameMismatch ? 1 : 0,
+        hasKabKotaAutoFix: hasKabKotaAutoFix ? 1 : 0,
+        hasJobFallback: hasJobFallback ? 1 : 0,
+      } as never,
+    })
+  );
 }
 
 /** Updates just the sheet_status field, e.g. once a submission that predates this column is re-synced. Backfill-only. */
 export async function updateSheetStatus(submissionId: string, sheetStatus: string, sheetRowNumber: number): Promise<void> {
-  const db = await getDb();
-  await db.execute({
-    sql: "UPDATE submissions SET sheet_status = @sheetStatus, sheet_row_number = @sheetRowNumber WHERE id = @submissionId",
-    args: { submissionId, sheetStatus, sheetRowNumber } as never,
-  });
+  await withDb((db) =>
+    db.execute({
+      sql: "UPDATE submissions SET sheet_status = @sheetStatus, sheet_row_number = @sheetRowNumber WHERE id = @submissionId",
+      args: { submissionId, sheetStatus, sheetRowNumber } as never,
+    })
+  );
 }
 
 /** Marks (or unmarks) a submission as followed up with the PIC — an operator-driven workflow flag, independent of the row-level Valid/Invalid status. */
 export async function setFollowUpStatus(submissionId: string, followedUp: boolean): Promise<void> {
-  const db = await getDb();
-  await db.execute({
-    sql: "UPDATE submissions SET followed_up_at = @followedUpAt WHERE id = @submissionId",
-    args: { submissionId, followedUpAt: followedUp ? new Date().toISOString() : null } as never,
-  });
+  await withDb((db) =>
+    db.execute({
+      sql: "UPDATE submissions SET followed_up_at = @followedUpAt WHERE id = @submissionId",
+      args: { submissionId, followedUpAt: followedUp ? new Date().toISOString() : null } as never,
+    })
+  );
 }
 
 /** Updates just the file_provinsi field — used when the revalidation backfill applies the declaredProvinsi fallback for a blank C2 to already-stored submissions. Backfill-only. */
 export async function updateSubmissionFileProvinsi(submissionId: string, fileProvinsi: string): Promise<void> {
-  const db = await getDb();
-  await db.execute({
-    sql: "UPDATE submissions SET file_provinsi = @fileProvinsi WHERE id = @submissionId",
-    args: { submissionId, fileProvinsi } as never,
-  });
+  await withDb((db) =>
+    db.execute({
+      sql: "UPDATE submissions SET file_provinsi = @fileProvinsi WHERE id = @submissionId",
+      args: { submissionId, fileProvinsi } as never,
+    })
+  );
 }
 
 /** Deletes a submission and its rows/NIK-registry entries entirely, so it can be reprocessed from scratch. Backfill-only. */
 export async function deleteSubmission(submissionId: string): Promise<void> {
-  const db = await getDb();
-  const tx = await db.transaction("write");
-  try {
-    await tx.execute({ sql: "DELETE FROM nik_registry WHERE submission_id = ?", args: [submissionId] });
-    await tx.execute({ sql: "DELETE FROM submission_rows WHERE submission_id = ?", args: [submissionId] });
-    await tx.execute({ sql: "DELETE FROM submissions WHERE id = ?", args: [submissionId] });
-    await tx.commit();
-  } finally {
-    tx.close();
-  }
+  await withDb(async (db) => {
+    const tx = await db.transaction("write");
+    try {
+      await tx.execute({ sql: "DELETE FROM nik_registry WHERE submission_id = ?", args: [submissionId] });
+      await tx.execute({ sql: "DELETE FROM submission_rows WHERE submission_id = ?", args: [submissionId] });
+      await tx.execute({ sql: "DELETE FROM submissions WHERE id = ?", args: [submissionId] });
+      await tx.commit();
+    } finally {
+      tx.close();
+    }
+  });
 }
 
 /** Wipes the NIK registry so it can be rebuilt from scratch in chronological order. Backfill-only. */
 export async function clearNikRegistry(): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM nik_registry");
+  await withDb((db) => db.execute("DELETE FROM nik_registry"));
 }
 
 /** Registers one NIK in the registry (used by the revalidation backfill, mirroring saveProcessedSubmission's logic). */
 export async function registerNikForBackfill(nik: string, submissionId: string, rowDbId: number, picName: string, timestamp: string): Promise<void> {
-  const db = await getDb();
-  await db.execute({
-    sql: `INSERT OR IGNORE INTO nik_registry (nik, submission_id, row_id, pic_name, timestamp, first_seen_at)
+  await withDb((db) =>
+    db.execute({
+      sql: `INSERT OR IGNORE INTO nik_registry (nik, submission_id, row_id, pic_name, timestamp, first_seen_at)
     VALUES (@nik, @submissionId, @rowDbId, @picName, @timestamp, @firstSeenAt)`,
-    args: { nik, submissionId, rowDbId, picName, timestamp, firstSeenAt: new Date().toISOString() } as never,
-  });
+      args: { nik, submissionId, rowDbId, picName, timestamp, firstSeenAt: new Date().toISOString() } as never,
+    })
+  );
 }
 
 /** All submissions ordered by their Form response timestamp (oldest first) — the order PICs actually submitted in, which is what "NIK already registered in an earlier submission" should be measured against. */
@@ -522,14 +563,15 @@ export async function getPendingFollowUps(): Promise<SubmissionRecord[]> {
 }
 
 export async function getSubmissionRows(submissionId: string): Promise<ValidatedRow[]> {
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: `SELECT
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: `SELECT
       row_number as rowNumber, no, nama, nik, no_wa as noWa, job, kota_kabupaten as kotaKabupaten,
       kode_prov as kodeProv, kode_kota as kodeKota, job_id as jobId, status, errors, warnings
     FROM submission_rows WHERE submission_id = ? ORDER BY row_number ASC`,
-    args: [submissionId],
-  });
+      args: [submissionId],
+    })
+  );
 
   return rs.rows.map((r) => ({
     ...(r as unknown as Record<string, unknown>),
@@ -558,11 +600,12 @@ export async function getReportRows(submissionId?: string, options?: { pendingOn
     ${submissionId ? "WHERE s.id = @submissionId" : ""}
     ORDER BY s.timestamp ASC, sr.row_number ASC
   `;
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: query,
-    args: submissionId ? ({ submissionId } as never) : [],
-  });
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: query,
+      args: submissionId ? ({ submissionId } as never) : [],
+    })
+  );
 
   const reportRows = rs.rows.map((r) => ({
     ...(r as unknown as Record<string, unknown>),
@@ -592,9 +635,9 @@ export interface NikSearchHit {
 export async function searchByNik(query: string): Promise<NikSearchHit[]> {
   const digits = query.replace(/\D/g, "");
   if (!digits) return [];
-  const db = await getDb();
-  const rs = await db.execute({
-    sql: `SELECT
+  const rs = await withDb((db) =>
+    db.execute({
+      sql: `SELECT
       s.id as submissionId, s.pic_name as picName, s.timestamp,
       sr.row_number as rowNumber, sr.nama, sr.nik, sr.status
     FROM submission_rows sr
@@ -602,7 +645,8 @@ export async function searchByNik(query: string): Promise<NikSearchHit[]> {
     WHERE sr.nik LIKE @pattern
     ORDER BY s.timestamp DESC
     LIMIT 200`,
-    args: { pattern: `%${digits}%` } as never,
-  });
+      args: { pattern: `%${digits}%` } as never,
+    })
+  );
   return rs.rows as unknown as NikSearchHit[];
 }
