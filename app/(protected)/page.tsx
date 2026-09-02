@@ -11,9 +11,11 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const submissions = await listSubmissions();
   const health = await getSystemHealth();
+  const debugInfo = `TURSO_HOST=${process.env.TURSO_DATABASE_URL?.split("/")[2] ?? "MISSING"} count=${submissions.length}`;
 
   return (
     <>
+      <p style={{ background: "yellow", padding: 8, fontFamily: "monospace" }}>DEBUG: {debugInfo}</p>
       <div className="panel">
         <h3 style={{ marginTop: 0 }}>Status Sistem</h3>
         <div className="summary-grid">
