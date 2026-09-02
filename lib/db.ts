@@ -198,11 +198,32 @@ export async function saveProcessedSubmission(submission: SubmissionRecord, rows
         @importMethod, @mappingScore, @hasNameMismatch, @hasKabKotaAutoFix, @sheetRowNumber, @hasJobFallback
       )`,
       args: {
-        ...submission,
+        // Bound explicitly (not spread) — unlike better-sqlite3, @libsql/client requires the args
+        // object to have exactly as many keys as named placeholders in the SQL, and SubmissionRecord
+        // carries fields (like followedUpAt) that aren't part of this particular INSERT.
+        id: submission.id,
+        timestamp: submission.timestamp,
+        email: submission.email,
+        picName: submission.picName,
+        picWhatsapp: submission.picWhatsapp,
         picWhatsappValid: submission.picWhatsappValid ? 1 : 0,
+        declaredProvinsi: submission.declaredProvinsi,
+        declaredKabKota: submission.declaredKabKota,
+        instansi: submission.instansi,
+        driveFileId: submission.driveFileId,
+        fileProvinsi: submission.fileProvinsi,
+        sheetStatus: submission.sheetStatus,
         locationMismatch: submission.locationMismatch ? 1 : 0,
+        validCount: submission.validCount,
+        invalidCount: submission.invalidCount,
+        status: submission.status,
+        processedAt: submission.processedAt,
+        errorMessage: submission.errorMessage,
+        importMethod: submission.importMethod,
+        mappingScore: submission.mappingScore,
         hasNameMismatch: submission.hasNameMismatch ? 1 : 0,
         hasKabKotaAutoFix: submission.hasKabKotaAutoFix ? 1 : 0,
+        sheetRowNumber: submission.sheetRowNumber,
         hasJobFallback: submission.hasJobFallback ? 1 : 0,
       } as never,
     });
