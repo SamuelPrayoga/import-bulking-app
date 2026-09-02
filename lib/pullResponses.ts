@@ -88,12 +88,18 @@ export async function pullNewResponses(): Promise<PullResponsesResult> {
   };
 
   for (const response of responses) {
-    const existingEntry = existingStatuses.get(response.id);
-    if (existingEntry) {
+    // Checked against knownIds (live-updated below), not just the up-front existingStatuses
+    // snapshot — the Sheet can legitimately contain two rows with the same response id (e.g. a
+    // resubmission), and the second one must be recognized as already-handled by the first
+    // occurrence within this same run, or it hits a UNIQUE constraint trying to insert it twice.
+    if (knownIds.has(response.id)) {
       // The response row itself (e.g. its "Status" column K) can still change after we've already
       // processed the file — collected here and written in one batched round trip at the end,
       // rather than one update per response, for the same reason as the up-front fetch above.
-      if (existingEntry.sheetStatus !== response.sheetStatus || existingEntry.sheetRowNumber !== response.sheetRowNumber) {
+      // (Only meaningful for a row that already existed before this run — a same-run duplicate's
+      // status was already written fresh by its first occurrence, so there's nothing to compare.)
+      const existingEntry = existingStatuses.get(response.id);
+      if (existingEntry && (existingEntry.sheetStatus !== response.sheetStatus || existingEntry.sheetRowNumber !== response.sheetRowNumber)) {
         sheetStatusUpdates.push({ id: response.id, sheetStatus: response.sheetStatus, sheetRowNumber: response.sheetRowNumber });
       }
       result.alreadyProcessed++;
