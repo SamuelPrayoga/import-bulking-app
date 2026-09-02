@@ -3,6 +3,10 @@ import { pullNewResponses } from "../../../lib/pullResponses";
 import { recordAuditEvent } from "../../../lib/auditLog";
 import { createBackup } from "../../../lib/backup";
 
+// Downloads + validates every new Drive file, which routinely exceeds Vercel's default 10s
+// function timeout on the Hobby plan — 60s is the max Hobby allows (Pro allows more).
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   const ip = request.headers.get("x-forwarded-for") ?? "local";
   try {

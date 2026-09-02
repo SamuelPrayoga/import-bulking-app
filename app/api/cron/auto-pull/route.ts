@@ -10,6 +10,9 @@ import { createBackup } from "../../../../lib/backup";
  * schedule instead — see .github/workflows/auto-pull.yml, which calls this hourly with the
  * CRON_SECRET below in the Authorization header so no one else can trigger it.
  */
+// Same reasoning as app/api/pull-responses/route.ts's maxDuration — this does the same work.
+export const maxDuration = 60;
+
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
   const auth = request.headers.get("authorization");
