@@ -62,12 +62,13 @@ function rowsToPlainObjects(rs: ResultSet): Array<Record<string, unknown>> {
 
 /** Dumps every table to one JSON blob (there's no better-sqlite3-style binary snapshot API against a remote libSQL/Turso database), then prunes anything past MAX_BACKUPS. */
 export async function createBackup(): Promise<string> {
-  const db = await getDb();
+  // Each query gets its own getDb() call (a fresh client) rather than sharing one — see the
+  // comment on getDb() in lib/db.ts for why reusing one client across multiple queries is unsafe here.
   const [submissions, submissionRows, nikRegistry, auditLog] = await Promise.all([
-    db.execute("SELECT * FROM submissions"),
-    db.execute("SELECT * FROM submission_rows"),
-    db.execute("SELECT * FROM nik_registry"),
-    db.execute("SELECT * FROM audit_log"),
+    (await getDb()).execute("SELECT * FROM submissions"),
+    (await getDb()).execute("SELECT * FROM submission_rows"),
+    (await getDb()).execute("SELECT * FROM nik_registry"),
+    (await getDb()).execute("SELECT * FROM audit_log"),
   ]);
 
   const dump = {

@@ -8,7 +8,7 @@ import { SESSION_COOKIE_NAME, isValidSessionToken } from "./lib/session";
 // that one submission's own clean file — never another PIC's row-level agent name or NIK.
 // /api/cron/auto-pull is protected by its own CRON_SECRET bearer-token check (not a session
 // cookie — the caller is GitHub Actions, not a logged-in browser), so it must bypass this gate too.
-const PUBLIC_EXACT_PATHS = ["/login", "/api/login", "/dashboard-publik", "/api/cron/auto-pull", "/api/debug-count"];
+const PUBLIC_EXACT_PATHS = ["/login", "/api/login", "/dashboard-publik", "/api/cron/auto-pull"];
 const PUBLIC_PATH_PREFIXES = ["/api/public-status"];
 
 export async function middleware(request: NextRequest) {

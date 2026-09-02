@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock, DatabaseBackup, MessageCircle, RefreshCw } from "lucide-react";
-import { listSubmissions, getDb } from "../../lib/db";
+import { listSubmissions } from "../../lib/db";
 import { getSystemHealth } from "../../lib/systemHealth";
 import { formatRelativeTime } from "../../lib/relativeTime";
 import { PullResponsesButton } from "../../components/PullResponsesButton";
@@ -9,18 +9,11 @@ import { SubmissionsExplorer } from "../../components/SubmissionsExplorer";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const rawDb = await getDb();
-  const rawRs = await rawDb.execute("SELECT COUNT(*) as n FROM submissions");
-  const rawCount = (rawRs.rows[0] as unknown as { n: number }).n;
-  const protocol = rawDb.protocol;
-
   const submissions = await listSubmissions();
   const health = await getSystemHealth();
-  const debugInfo = `TURSO_HOST=${process.env.TURSO_DATABASE_URL?.split("/")[2] ?? "MISSING"} hasToken=${Boolean(process.env.TURSO_AUTH_TOKEN)} protocol=${protocol} rawCount=${rawCount} listSubmissionsCount=${submissions.length}`;
 
   return (
     <>
-      <p style={{ background: "yellow", padding: 8, fontFamily: "monospace" }}>DEBUG: {debugInfo}</p>
       <div className="panel">
         <h3 style={{ marginTop: 0 }}>Status Sistem</h3>
         <div className="summary-grid">

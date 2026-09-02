@@ -8,39 +8,44 @@ import { isSheetStatusDone } from "./sheetStatus";
 
 const NIK_RE = /^\d{16}$/;
 
-let dbPromise: Promise<Client> | null = null;
+let schemaReady: Promise<void> | null = null;
 
-/**
- * Lazily creates (and schema-initializes) the singleton DB client. Uses Turso
- * (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN) when configured — production — and otherwise falls back
- * to a local libSQL file (same APP_DB_PATH override the tests use), so `npm run dev`/tests need
- * zero Turso setup.
- */
-export function getDb(): Promise<Client> {
-  if (!dbPromise) dbPromise = createAndInitClient();
-  return dbPromise;
+function buildClientConfig(): { url: string; authToken?: string } {
+  const tursoUrl = process.env.TURSO_DATABASE_URL;
+  if (tursoUrl) {
+    return { url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN };
+  }
+  const dbPath = process.env.APP_DB_PATH || path.join(process.cwd(), "data", "app.db");
+  mkdirSync(path.dirname(dbPath), { recursive: true });
+  return { url: `file:${dbPath}` };
 }
 
-async function createAndInitClient(): Promise<Client> {
-  const tursoUrl = process.env.TURSO_DATABASE_URL;
-  let client: Client;
-  if (tursoUrl) {
-    client = createClient({ url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN });
-  } else {
-    const dbPath = process.env.APP_DB_PATH || path.join(process.cwd(), "data", "app.db");
-    mkdirSync(path.dirname(dbPath), { recursive: true });
-    client = createClient({ url: `file:${dbPath}` });
-  }
-  await initSchema(client);
+/**
+ * Returns a fresh libSQL client, one per call — never a shared/reused instance. `createClient()`
+ * itself does no network I/O (that only happens on `.execute()`), so this is cheap, and matches
+ * `@libsql/client`'s own documented model ("every statement... is executed in its own logical
+ * database connection"). This is a deliberate departure from the usual "cache the client" pattern:
+ * on Vercel's serverless runtime, a single `Client` reused for a second, non-transactional
+ * `.execute()` call was observed to silently return an empty result set instead of throwing —
+ * every function in this file that needs more than one query must call `getDb()` again for each
+ * one (an interactive `db.transaction()` is unaffected — its multiple `tx.execute()` calls share
+ * one transaction by design and work correctly).
+ *
+ * Uses Turso (TURSO_DATABASE_URL/TURSO_AUTH_TOKEN) when configured — production — and otherwise
+ * falls back to a local libSQL file (same APP_DB_PATH override the tests use), so `npm run
+ * dev`/tests need zero Turso setup. Schema initialization itself still only actually runs once per
+ * process, via the memoized `schemaReady` promise.
+ */
+export async function getDb(): Promise<Client> {
+  const client = createClient(buildClientConfig());
+  if (!schemaReady) schemaReady = initSchema(client);
+  await schemaReady;
   return client;
 }
 
-/** Closes the current connection so a fresh one (e.g. against a different APP_DB_PATH) can be opened. Test-only. */
+/** Forces the next getDb() call to re-run schema init (e.g. against a different APP_DB_PATH). Test-only. */
 export function closeDb(): void {
-  if (dbPromise) {
-    dbPromise.then((client) => client.close()).catch(() => {});
-    dbPromise = null;
-  }
+  schemaReady = null;
 }
 
 async function initSchema(client: Client): Promise<void> {
