@@ -1,4 +1,6 @@
 import { put, list, del } from "@vercel/blob";
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { withDb } from "./db";
 import type { ResultSet } from "@libsql/client";
 
@@ -44,16 +46,53 @@ const vercelBlobStorage: BackupStorage = {
   },
 };
 
-let storage: BackupStorage = vercelBlobStorage;
+function localBackupDir(): string {
+  return process.env.APP_BACKUP_DIR || path.join(process.cwd(), "data", "backups");
+}
+
+function localFilePath(pathname: string): string {
+  const name = pathname.startsWith(PREFIX) ? pathname.slice(PREFIX.length) : pathname;
+  return path.join(localBackupDir(), name);
+}
+
+// Local dev/tests have no Vercel Blob token to talk to — mirrors lib/db.ts's Turso-vs-local-file
+// fallback so `npm run dev` works with zero Vercel credentials configured.
+const localFileBackupStorage: BackupStorage = {
+  async put(pathname, content) {
+    const filePath = localFilePath(pathname);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, content);
+  },
+  async list() {
+    const dir = localBackupDir();
+    mkdirSync(dir, { recursive: true });
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => {
+        const stat = statSync(path.join(dir, f));
+        return { pathname: `${PREFIX}${f}`, sizeBytes: stat.size, uploadedAt: stat.mtime.toISOString() };
+      });
+  },
+  async del(pathname) {
+    try {
+      unlinkSync(localFilePath(pathname));
+    } catch {
+      // already gone — fine, del() is only ever asked to remove things list() just reported.
+    }
+  },
+};
+
+const defaultBackupStorage: BackupStorage = process.env.BLOB_READ_WRITE_TOKEN ? vercelBlobStorage : localFileBackupStorage;
+let storage: BackupStorage = defaultBackupStorage;
 
 /** Swaps the storage backend — test-only, so backup.test.ts doesn't need a real Vercel Blob store/token. */
 export function setBackupStorage(custom: BackupStorage): void {
   storage = custom;
 }
 
-/** Resets to the real Vercel Blob-backed storage — test-only cleanup counterpart to setBackupStorage. */
+/** Resets to the real backend (Vercel Blob in production, local file in dev) — test-only cleanup counterpart to setBackupStorage. */
 export function resetBackupStorage(): void {
-  storage = vercelBlobStorage;
+  storage = defaultBackupStorage;
 }
 
 function rowsToPlainObjects(rs: ResultSet): Array<Record<string, unknown>> {
